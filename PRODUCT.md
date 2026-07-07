@@ -8,8 +8,10 @@ shares and browsable rosters of actual professionals.
 decoration. Trust is the product: honest sample framing, honest loading, honest
 empty/degraded states.
 
-**Users:** students + career switchers, predominantly on phones via shared
-links. Mobile-first is required, not aspirational.
+**Users:** students + career switchers. **Primary surface is desktop web** —
+this is a sit-down research tool; design for data density on a laptop screen
+first. Shared links still open fine on phones (responsive is table stakes,
+not the design driver).
 
 **Voice:** a field atlas of careers — evidence, not hype. Never implies ground
 truth about all humans in a role; always "of the professionals we analyzed."

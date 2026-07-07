@@ -29,12 +29,14 @@ data screens (spruce ≤10%, carried by figures/bars/links).
   The mono voice IS the brand's credibility.
 - Body line length ≤ 70ch. `text-wrap: balance` on headings.
 
-## Layout
+## Layout (desktop-first)
 
-- Single column, max-width 44rem for results (reading), 56rem for rosters.
-- Clusters are **ranked full-width rows** (share bar + mono % + label +
-  description + example people), never a card grid.
-- Rosters: table on ≥640px, stacked rows below.
+- Results: max-width 60rem; each cluster row uses the width — header line
+  (% + label + count) over a full share bar, then description and example
+  people side-by-side in two columns. Collapses to one column < 760px.
+- Rosters: max-width 69rem table with Name / Current role / Education /
+  Location / Yrs / link columns; stacked rows < 640px (location dropped).
+- Clusters are **ranked rows**, never a card grid.
 - Spacing rhythm: 4px base; section gaps 48/64, row padding 16/20.
 
 ## Motion

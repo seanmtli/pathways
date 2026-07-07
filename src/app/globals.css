@@ -129,39 +129,59 @@ button {
   }
 }
 
-/* Explore Path roster: 12-col rows on wide screens, stacked cells on phones */
+/* Results: desktop-first cluster rows — description + examples share the
+   width in two columns; collapses to one column on narrow screens */
+.cluster-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 10px 44px;
+  align-items: start;
+  margin-top: 12px;
+}
+@media (max-width: 759px) {
+  .cluster-body { grid-template-columns: 1fr; gap: 12px; }
+}
+
+/* Explore Path roster: full table on desktop, stacked cells on phones */
 .roster {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.roster > li {
+.roster > li,
+.roster-head {
   display: grid;
-  grid-template-columns: minmax(140px, 1.1fr) 2fr minmax(150px, 1.2fr) 56px 34px;
-  gap: 4px 16px;
+  grid-template-columns: minmax(150px, 1.1fr) minmax(0, 2.1fr) minmax(150px, 1.2fr) minmax(110px, 0.9fr) 52px 34px;
+  gap: 4px 18px;
   align-items: baseline;
+}
+.roster > li {
   padding: 12px 0;
   border-top: 1px solid var(--line);
   font-size: 14.5px;
 }
 .roster .r-name { font-weight: 550; }
-.roster .r-role, .roster .r-edu { color: var(--ink-soft); }
+.roster .r-role, .roster .r-edu, .roster .r-loc { color: var(--ink-soft); }
 .roster .r-yoe { color: var(--ink-soft); text-align: right; }
-.roster .r-role, .roster .r-edu, .roster .r-name {
+.roster .r-role, .roster .r-edu, .roster .r-name, .roster .r-loc {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .roster-head {
-  display: grid;
-  grid-template-columns: minmax(140px, 1.1fr) 2fr minmax(150px, 1.2fr) 56px 34px;
-  gap: 16px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--ink-soft);
   padding-bottom: 8px;
+}
+
+@media (max-width: 899px) {
+  .roster > li, .roster-head {
+    grid-template-columns: minmax(140px, 1.1fr) minmax(0, 2fr) minmax(150px, 1.2fr) 52px 34px;
+  }
+  .roster .r-loc { display: none; }
 }
 
 @media (max-width: 639px) {
@@ -178,7 +198,6 @@ button {
   .roster .r-role { grid-area: role; white-space: normal; }
   .roster .r-link { grid-area: link; justify-self: end; }
   .roster .r-edu { grid-area: meta; }
-  .roster .r-edu::after { content: ""; }
   .roster .r-yoe { display: none; }
   .roster .r-edu[data-yoe]:not([data-yoe=""])::after {
     content: " · " attr(data-yoe);

@@ -60,7 +60,7 @@ export default async function ResultsPage({ params }: { params: Promise<{ key: s
   const maxPct = Math.max(...search.clusters.map((c) => c.percentage), 1);
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "24px 20px 64px" }}>
+    <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 24px 64px" }}>
       <ResultsTracker
         canonicalKey={search.canonical_key}
         sampleSize={search.sample_size}
@@ -144,11 +144,12 @@ export default async function ResultsPage({ params }: { params: Promise<{ key: s
               />
             </div>
 
-            <p style={{ fontSize: 15, color: "var(--ink-soft)", marginBottom: 12 }}>
-              {cluster.archetype.description}
-            </p>
+            <div className="cluster-body">
+              <p style={{ fontSize: 15, color: "var(--ink-soft)" }}>
+                {cluster.archetype.description}
+              </p>
 
-            <ul style={{ listStyle: "none", margin: "0 0 12px", padding: 0, display: "grid", gap: 6 }}>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6, minWidth: 0 }}>
               {cluster.members.slice(0, 3).map((p) => (
                 <li key={p.id} style={{ fontSize: 14, display: "flex", gap: 8, alignItems: "baseline", minWidth: 0 }}>
                   <span style={{ fontWeight: 550, whiteSpace: "nowrap", flexShrink: 0 }}>{p.name}</span>
@@ -167,9 +168,10 @@ export default async function ResultsPage({ params }: { params: Promise<{ key: s
                   </span>
                 </li>
               ))}
-            </ul>
+              </ul>
+            </div>
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
               <PathLink
                 href={`/role/${encodeURIComponent(search.canonical_key)}/path/${i}`}
                 label={cluster.archetype.label}

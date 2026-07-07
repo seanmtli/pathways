@@ -40,7 +40,7 @@ export default async function ExplorePathPage({
   const backHref = `/role/${encodeURIComponent(search.canonical_key)}`;
 
   return (
-    <main style={{ maxWidth: 880, margin: "0 auto", padding: "24px 20px 64px" }}>
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 24px 64px" }}>
       <nav style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <Link href={backHref} style={{ fontSize: 14, color: "var(--brand)" }}>
           ← {search.role_description}
@@ -66,6 +66,7 @@ export default async function ExplorePathPage({
         <span>Name</span>
         <span>Current role</span>
         <span>Education</span>
+        <span className="r-loc">Location</span>
         <span style={{ textAlign: "right" }}>Yrs</span>
         <span />
       </div>
@@ -82,6 +83,9 @@ export default async function ExplorePathPage({
               </span>
               <span className="r-edu" data-yoe={yoe} title={p.education.map((e) => e.school).join("; ")}>
                 {edu}
+              </span>
+              <span className="r-loc" title={p.location ?? undefined}>
+                {p.location ? p.location.split(",").slice(0, 2).join(",") : "—"}
               </span>
               <span className="r-yoe mono">{yoe || "—"}</span>
               <span className="r-link">

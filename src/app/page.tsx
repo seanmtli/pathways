@@ -33,7 +33,7 @@ export default async function LandingPage({
           flexDirection: "column",
           justifyContent: "center",
           padding: "24px clamp(20px, 5vw, 48px) 64px",
-          maxWidth: 760,
+          maxWidth: 860,
           width: "100%",
           margin: "0 auto",
         }}
