@@ -119,7 +119,7 @@ const NOT_RELEVANT = "not_relevant";
 // person-id enums were observed to hit "Schema is too complex" 400s and to
 // degrade enforcement near the limit) and are trivial for the model to copy.
 // Missing people remain possible — caught by the resilient worker below.
-function classifySchema(labels: string[], ordinals: string[]): Record<string, unknown> {
+function classifySchema(labels: string[], ordinals: string[], allowNotRelevant: boolean): Record<string, unknown> {
   return {
     type: "object",
     properties: {
@@ -129,7 +129,7 @@ function classifySchema(labels: string[], ordinals: string[]): Record<string, un
           type: "object",
           properties: {
             id: { type: "string", enum: ordinals },
-            archetype: { type: "string", enum: [...labels, NOT_RELEVANT] },
+            archetype: { type: "string", enum: allowNotRelevant ? [...labels, NOT_RELEVANT] : labels },
           },
           required: ["id", "archetype"],
           additionalProperties: false,
@@ -152,9 +152,9 @@ interface Assignment {
  * degrade intermittently under parallel load — a trivially-off label
  * ("...To PM" vs "...to PM") should be coerced, not thrown away.
  */
-function labelNormalizer(labels: string[]): (raw: string) => string | null {
+function labelNormalizer(labels: string[], allowNotRelevant: boolean): (raw: string) => string | null {
   const map = new Map(labels.map((l) => [l.trim().toLowerCase(), l]));
-  map.set(NOT_RELEVANT, NOT_RELEVANT);
+  if (allowNotRelevant) map.set(NOT_RELEVANT, NOT_RELEVANT);
   return (raw) => map.get(raw.trim().toLowerCase()) ?? null;
 }
 
@@ -162,18 +162,24 @@ async function classifyBatch(
   roleDescription: string,
   archetypes: Archetype[],
   batch: CleanProfile[],
+  allowNotRelevant: boolean,
   feedback?: string,
 ): Promise<Assignment[]> {
   const labels = archetypes.map((a) => a.label);
+  const relevanceRules = allowNotRelevant
+    ? `
+- If a person is clearly NOT actually in or closely adjacent to the target role (a false positive from the data vendor — wrong industry, wrong function, or a title match that means something else), assign "${NOT_RELEVANT}" instead. Be strict: relevance means their current role genuinely matches the target role.
+- Interns, summer associates/analysts, students, and trainees are "${NOT_RELEVANT}" — they do not yet hold the role.
+- If the target role specifies a startup employer: people at decades-old small businesses, family firms, agencies, franchises, or their own one-person shell company are "${NOT_RELEVANT}" — a startup is a young company, not merely a small one. Use the career history for age signals (e.g. someone employed at the same small company since 2005 is not at a startup).`
+    : `
+- Everyone in this batch has already been screened as genuinely in the target role — assign each person to the single closest archetype even if the fit is imperfect.`;
   const system = `You are classifying professionals into fixed career-path archetypes for the target role: ${roleDescription}
 
 Archetypes:
 ${archetypes.map((a) => `- "${a.label}": ${a.description} Signals: ${a.signals.join("; ")}`).join("\n")}
 
 Rules:
-- Assign each person to exactly ONE archetype label (verbatim from the list) — the single best fit for how they reached their current role.
-- If a person is clearly NOT actually in or closely adjacent to the target role (a false positive from the data vendor — wrong industry, wrong function, or a title match that means something else), assign "${NOT_RELEVANT}" instead. Be strict: relevance means their current role genuinely matches the target role.
-- Interns, summer associates/analysts, students, and trainees are "${NOT_RELEVANT}" — they do not yet hold the role.
+- Assign each person to exactly ONE archetype label (verbatim from the list) — the single best fit for how they reached their current role.${relevanceRules}
 - Return exactly one assignment per input person, keyed by their [id]. The assignments array must have exactly ${batch.length} entries — one for each id from 1 to ${batch.length}. Do not skip anyone.`;
 
   // People are numbered 1..N for this call; ordinals map back to person ids here.
@@ -185,7 +191,7 @@ Rules:
   const { assignments } = await jsonCall<{ assignments: { id: string; archetype: string }[] }>({
     system,
     user,
-    schema: classifySchema(labels, ordinals),
+    schema: classifySchema(labels, ordinals, allowNotRelevant),
     maxTokens: 6000,
   });
 
@@ -214,11 +220,12 @@ async function classifyAttempt(
   assigned: Map<string, string>,
   label: string,
   log: (msg: string) => void,
+  allowNotRelevant: boolean,
   feedback?: string,
 ): Promise<void> {
-  const normalize = labelNormalizer(archetypes.map((a) => a.label));
+  const normalize = labelNormalizer(archetypes.map((a) => a.label), allowNotRelevant);
   try {
-    const assignments = await classifyBatch(roleDescription, archetypes, profiles, feedback);
+    const assignments = await classifyBatch(roleDescription, archetypes, profiles, allowNotRelevant, feedback);
     const ids = new Set(profiles.map((p) => p.id));
     for (const a of assignments) {
       const canonical = normalize(a.archetype);
@@ -231,24 +238,28 @@ async function classifyAttempt(
   }
 }
 
-export async function clusterProfiles(
+/**
+ * One full derive-and-classify round: 2a on a sample of `profiles`, then 2b
+ * over all of them (parallel wave + sequential retry wave, §6.5).
+ */
+async function clusterRound(
   roleDescription: string,
   profiles: CleanProfile[],
-  log: (msg: string) => void = () => {},
-): Promise<ClusteringResult> {
+  log: (msg: string) => void,
+  allowNotRelevant = true,
+): Promise<{ archetypes: Archetype[]; assigned: Map<string, string>; batches: number; retries: number }> {
   // Pass 2a
   const sample = representativeSample(profiles, config.archetypeSampleSize());
   log(`Pass 2a: deriving archetypes from ${sample.length} sampled histories…`);
   const archetypes = await deriveArchetypes(roleDescription, sample);
   log(`Pass 2a: ${archetypes.length} archetypes derived: ${archetypes.map((a) => a.label).join(" | ")}`);
 
-  // Pass 2b — independent batches, run in parallel
+  // Pass 2b — independent batches
   const batchSize = config.classifyBatchSize();
   const batches: CleanProfile[][] = [];
   for (let i = 0; i < profiles.length; i += batchSize) batches.push(profiles.slice(i, i + batchSize));
   log(`Pass 2b: classifying ${profiles.length} profiles in ${batches.length} parallel batches of ≤${batchSize}…`);
 
-  const labels = archetypes.map((a) => a.label);
   const assigned = new Map<string, string>(); // person id → canonical label
 
   // Wave 1 — parallel first attempts, with bounded concurrency. Constrained
@@ -260,27 +271,77 @@ export async function clusterProfiles(
     Array.from({ length: Math.min(concurrency, batches.length) }, async () => {
       while (next < batches.length) {
         const i = next++;
-        await classifyAttempt(roleDescription, archetypes, batches[i], assigned, `Batch ${i + 1}`, log);
+        await classifyAttempt(roleDescription, archetypes, batches[i], assigned, `Batch ${i + 1}`, log, allowNotRelevant);
       }
     }),
   );
 
   // Wave 2 — the single retry per unassigned profile (§6.5), run
   // SEQUENTIALLY after the parallel wave so it executes under calm load.
-  let unassigned = profiles.filter((p) => !assigned.has(p.id));
+  const unassigned = profiles.filter((p) => !assigned.has(p.id));
   const retries = unassigned.length > 0 ? Math.ceil(unassigned.length / batchSize) : 0;
   if (unassigned.length > 0) {
     log(`Retry wave: ${unassigned.length} profiles unassigned after parallel pass, retrying sequentially`);
     for (let i = 0; i < unassigned.length; i += batchSize) {
       const chunk = unassigned.slice(i, i + batchSize);
       await classifyAttempt(
-        roleDescription, archetypes, chunk, assigned, `Retry chunk ${i / batchSize + 1}`, log,
+        roleDescription, archetypes, chunk, assigned, `Retry chunk ${i / batchSize + 1}`, log, allowNotRelevant,
         `it did not include every person. You MUST return exactly one assignment for every id from 1 to ${chunk.length}`,
       );
     }
   }
 
-  // After the retry, anyone still unassigned is dropped and logged (§6.5).
+  return { archetypes, assigned, batches: batches.length, retries };
+}
+
+export async function clusterProfiles(
+  roleDescription: string,
+  profiles: CleanProfile[],
+  log: (msg: string) => void = () => {},
+): Promise<ClusteringResult> {
+  // Round 1 over the full cleaned pull.
+  const round1 = await clusterRound(roleDescription, profiles, log);
+
+  const round1Relevant = profiles.filter((p) => {
+    const label = round1.assigned.get(p.id);
+    return label !== undefined && label !== NOT_RELEVANT;
+  });
+  const round1Classified = [...round1.assigned.values()].length;
+
+  // Pollution recovery: when most of the pull is vendor false positives, the
+  // round-1 archetypes were fitted to garbage (2a can't know relevance in
+  // advance). Re-derive archetypes from the RELEVANT people only and
+  // re-classify them — round 1 then serves purely as the relevance sieve.
+  const threshold = Number(process.env.POLLUTION_RECOVERY_THRESHOLD ?? "0.6");
+  let archetypes = round1.archetypes;
+  let assigned = round1.assigned;
+  let batches = round1.batches;
+  let retries = round1.retries;
+
+  if (
+    round1Classified > 0 &&
+    round1Relevant.length / round1Classified < threshold &&
+    round1Relevant.length >= config.minUsableProfiles()
+  ) {
+    log(
+      `Recovery: only ${round1Relevant.length}/${round1Classified} classified as relevant — ` +
+        `re-deriving archetypes from the relevant subset`,
+    );
+    const round2 = await clusterRound(roleDescription, round1Relevant, log, false);
+    archetypes = round2.archetypes;
+    batches += round2.batches;
+    retries += round2.retries;
+    // Merge: round-1 not_relevant verdicts stand; relevant people take their
+    // round-2 label (including a stricter round-2 not_relevant).
+    assigned = new Map(round1.assigned);
+    for (const p of round1Relevant) {
+      const label2 = round2.assigned.get(p.id);
+      if (label2 !== undefined) assigned.set(p.id, label2);
+      else assigned.delete(p.id); // dropped in round 2 → counts as dropped
+    }
+  }
+
+  // Anyone unassigned after all waves is dropped and logged (§6.5).
   const droppedAfterRetry = profiles.filter((p) => !assigned.has(p.id));
   if (droppedAfterRetry.length > 0) {
     log(`Dropping ${droppedAfterRetry.length} profiles still unassigned after retry`);
@@ -297,13 +358,14 @@ export async function clusterProfiles(
   }
 
   // Aggregate — counts and percentages computed in code only.
+  const labels = archetypes.map((a) => a.label);
   const byLabel = new Map<string, CleanProfile[]>(labels.map((l) => [l, []]));
   const notRelevant: CleanProfile[] = [];
   const profileById = new Map(profiles.map((p) => [p.id, p]));
 
   for (const [id, label] of assigned) {
     const profile = profileById.get(id)!;
-    if (label === NOT_RELEVANT) notRelevant.push(profile);
+    if (label === NOT_RELEVANT || !byLabel.has(label)) notRelevant.push(profile);
     else byLabel.get(label)!.push(profile);
   }
 
@@ -328,7 +390,7 @@ export async function clusterProfiles(
       relevant: relevantTotal,
       notRelevant: notRelevant.length,
       dropped: droppedAfterRetry.length,
-      batches: batches.length,
+      batches,
       batchRetries: retries,
     },
   };

@@ -40,4 +40,9 @@ export const config = {
 
   // Cache freshness window in days (PRD §6.8)
   cacheFreshnessDays: () => intEnv("CACHE_FRESHNESS_DAYS", "30"),
+
+  // Default person-location filter on pulls. The v1 test audience is US;
+  // without this, vendor samples skew heavily international and produce
+  // artifact clusters. Empty string disables.
+  pullCountry: () => env("PULL_COUNTRY_FILTER", "United States"),
 };

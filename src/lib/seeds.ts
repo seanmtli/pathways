@@ -3,7 +3,7 @@
 
 export const EXAMPLE_CHIPS = [
   "Chief Data Officer at a sports team",
-  "Product manager at a VC-backed startup",
+  "Product manager at a startup",
   "Private equity associate",
   "Sports agent",
   "Venture capital investor",

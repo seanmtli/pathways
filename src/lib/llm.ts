@@ -49,6 +49,10 @@ export async function jsonCall<T>(opts: JsonCallOpts, attempt = 0): Promise<T> {
           { role: "user", content: opts.user },
         ],
         max_tokens: opts.maxTokens,
+        // Determinism matters: the parser output IS the cache key (§6.3) —
+        // temperature drift produces duplicate cache entries and paid
+        // duplicate vendor pulls for the same role.
+        temperature: 0,
         response_format: {
           type: "json_schema",
           json_schema: { name: "result", strict: true, schema: opts.schema },
@@ -82,6 +86,18 @@ export async function jsonCall<T>(opts: JsonCallOpts, attempt = 0): Promise<T> {
   if (data.error) throw new Error(`OpenRouter error: ${data.error.message}`);
   const choice = data.choices?.[0];
   const content = choice?.message?.content;
-  if (!content) throw new Error(`LLM returned no content (finish_reason: ${choice?.finish_reason ?? "unknown"})`);
-  return JSON.parse(content) as T;
+  try {
+    if (!content) throw new Error(`LLM returned no content (finish_reason: ${choice?.finish_reason ?? "unknown"})`);
+    return JSON.parse(content) as T;
+  } catch (err) {
+    // Truncated/malformed payloads happen as transient provider glitches —
+    // worth exactly one fresh attempt before surfacing the failure.
+    if (attempt === 0) {
+      await new Promise((r) => setTimeout(r, 2000));
+      return jsonCall(opts, 1);
+    }
+    throw new Error(
+      `LLM returned unparseable content (finish_reason: ${choice?.finish_reason ?? "unknown"}): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }

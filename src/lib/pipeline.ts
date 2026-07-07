@@ -220,6 +220,14 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
       clusterProfiles(parsed.roleDescription, profiles, (m) => stage("clustering", m)),
     );
 
+    // Thin-data gate again AFTER relevance filtering (§8: a clear "not enough
+    // data" state always beats a low-confidence forced output). A pull can be
+    // large but mostly vendor false positives — never cache that as a result.
+    if (result.stats.relevant < config.minUsableProfiles()) {
+      await finish({ canonical_key: key, outcome: "thin_data" });
+      return { kind: "thin_data", suggestions: parsed.suggestions, usableProfiles: result.stats.relevant, canonicalKey: key };
+    }
+
     // 6. Cache write
     stage("caching");
     await retryOnce("cache_write", key, () =>

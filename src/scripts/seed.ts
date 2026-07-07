@@ -11,7 +11,7 @@ import { getTodaySpend } from "../lib/db.ts";
 // §10 Appendix A, phrased as a user would type them. ★ = golden set.
 const SEED_ROLES: { query: string; golden?: boolean; stressTest?: boolean }[] = [
   { query: "Head of Strategy and Analytics at a professional sports team", golden: true },
-  { query: "Product Manager at a VC-backed startup", golden: true },
+  { query: "Product Manager at a startup", golden: true },
   { query: "Chief Data Officer at a professional sports team" },
   { query: "Private equity associate", golden: true },
   { query: "Director of Baseball Operations at an MLB team" },
