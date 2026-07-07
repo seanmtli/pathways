@@ -1,2 +1,1 @@
-# pathways
-career finder tool
+Pathways is a career-navigation tool. A user types a target role in plain English — *"I want to be a Chief Data Officer at a sports team"* — and the app shows them **real career paths that real people took to get there**, clustered into a small number of named archetypes (e.g. "Sports analytics → ops," "Academic/data science track," "Consulting → team analyst"), each with the share of analyzed professionals who took that path and a browsable roster of actual people (name, current role, education, LinkedIn link).
