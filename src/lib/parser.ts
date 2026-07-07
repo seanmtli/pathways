@@ -25,6 +25,9 @@ export interface ParseResult {
   canonicalRole: CanonicalRole | null;
   roleDescription: string;
   crustdataFilter: CrustdataFilter | null;
+  /** Title conditions alone — the fail-open fallback when an industry
+   * constraint (possibly an invalid taxonomy name) matches ~nothing. */
+  titleOnlyFilter: CrustdataFilter | null;
 }
 
 const PARSE_SCHEMA = {
@@ -67,7 +70,7 @@ Output fields:
 4. title_variants — 3 to 6 job-title strings for substring matching against current job titles in a professional-profiles database. Write titles EXACTLY the way they appear on a business card — NEVER concatenate the industry or employer type into the title. People at hedge funds are titled "Investment Analyst" or "Analyst", not "hedge fund analyst"; the industry lives in industry_values. Include common synonyms and abbreviation forms. A short generic title (e.g. "Analyst") is fine when industry_values constrains the employer; without an industry constraint, keep variants specific enough not to match unrelated roles.
    Example: query "hedge fund analyst" → title_variants ["Investment Analyst", "Research Analyst", "Equity Analyst", "Analyst"], industry_values ["Hedge Funds", "Investment Management"].
 
-5. industry_values — LinkedIn-style industry category names for the employer, e.g. "Spectator Sports", "Hedge Funds", "Investment Management", "Venture Capital and Private Equity Principals", "Software Development". Choose the categories the actual employers would list themselves under — not adjacent industries. Empty array if the role is not industry-constrained (the title alone is specific enough).
+5. industry_values — EXACT LinkedIn industry-taxonomy names for the employer. Invalid names silently match zero companies, so only use names from the official taxonomy. Common valid values: "Spectator Sports", "Sports Teams and Clubs", "Business Consulting and Services", "Venture Capital and Private Equity Principals", "Investment Banking", "Investment Management", "Hedge Funds", "Financial Services", "Banking", "Software Development", "Technology, Information and Internet", "IT Services and IT Consulting", "Advertising Services", "Entertainment Providers", "Broadcast Media Production and Distribution", "Higher Education", "Hospitals and Health Care", "Insurance", "Real Estate", "Retail", "Manufacturing", "Gambling Facilities and Casinos", "Staffing and Recruiting". Choose the categories the actual employers would list themselves under — not adjacent industries. If you are not confident a name is in the official taxonomy, OMIT it and rely on titles. Empty array if the role is not industry-constrained.
 
 6. suggestions — 2-3 example role queries. If the query is invalid, suggest concrete roles ("sports agent", "VP of product"). If valid, suggest broader or adjacent versions of THIS role (used when data is too thin).
 
@@ -109,6 +112,7 @@ export async function parseQuery(rawQuery: string): Promise<ParseResult> {
       canonicalRole: null,
       roleDescription: "",
       crustdataFilter: null,
+      titleOnlyFilter: null,
     };
   }
 
@@ -136,5 +140,6 @@ export async function parseQuery(rawQuery: string): Promise<ParseResult> {
     canonicalRole,
     roleDescription: raw.role_description,
     crustdataFilter: conditions.length === 1 ? conditions[0] : { op: "and", conditions },
+    titleOnlyFilter: conditions[0],
   };
 }

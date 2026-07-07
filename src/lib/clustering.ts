@@ -213,53 +213,33 @@ Rules:
 }
 
 /**
- * Resilient batch worker implementing the §6.5 validation contract:
- * - every valid, first-occurrence assignment with an in-batch id is kept
- *   (hallucinated ids are impossible via the schema enum AND rejected here);
- * - anyone left unassigned gets exactly one retry, in a smaller call
- *   containing only the unassigned people plus explicit feedback;
- * - anyone still unassigned after the retry is dropped and logged.
+ * One classification attempt over a set of profiles. Every valid,
+ * first-occurrence assignment with an in-set id is kept (hallucinated ids
+ * are impossible via the schema enum AND rejected here); anything else is
+ * left unassigned for the caller to retry or drop (§6.5).
  */
-async function classifyBatchResilient(
+async function classifyAttempt(
   roleDescription: string,
   archetypes: Archetype[],
-  batch: CleanProfile[],
-  batchNo: number,
+  profiles: CleanProfile[],
+  assigned: Map<string, string>,
+  label: string,
   log: (msg: string) => void,
-): Promise<{ assigned: Map<string, string>; dropped: CleanProfile[]; retried: boolean }> {
+  feedback?: string,
+): Promise<void> {
   const normalize = labelNormalizer(archetypes.map((a) => a.label));
-  const assigned = new Map<string, string>(); // person id → canonical label
-  let remaining = batch;
-  let retried = false;
-
-  for (let attempt = 0; attempt < 2 && remaining.length > 0; attempt++) {
-    // The retry call re-renders the unassigned subset with fresh ordinals,
-    // so feedback demands full coverage rather than naming ids.
-    const feedback =
-      attempt > 0
-        ? `it did not include every person. You MUST return exactly one assignment for every id from 1 to ${remaining.length}`
-        : undefined;
-    try {
-      const assignments = await classifyBatch(roleDescription, archetypes, remaining, feedback);
-      const remainingIds = new Set(remaining.map((p) => p.id));
-      for (const a of assignments) {
-        const label = normalize(a.archetype);
-        if (label !== null && remainingIds.has(a.id) && !assigned.has(a.id)) assigned.set(a.id, label);
-      }
-    } catch (err) {
-      log(`Batch ${batchNo} attempt ${attempt + 1} errored: ${err instanceof Error ? err.message : String(err)}`);
+  try {
+    const assignments = await classifyBatch(roleDescription, archetypes, profiles, feedback);
+    const ids = new Set(profiles.map((p) => p.id));
+    for (const a of assignments) {
+      const canonical = normalize(a.archetype);
+      if (canonical !== null && ids.has(a.id) && !assigned.has(a.id)) assigned.set(a.id, canonical);
     }
-    remaining = batch.filter((p) => !assigned.has(p.id));
-    if (remaining.length > 0 && attempt === 0) {
-      retried = true;
-      log(`Batch ${batchNo}: ${remaining.length}/${batch.length} unassigned after attempt 1, retrying just those`);
-    }
+    const unassigned = profiles.filter((p) => !assigned.has(p.id)).length;
+    if (unassigned > 0) log(`${label}: ${unassigned}/${profiles.length} unassigned`);
+  } catch (err) {
+    log(`${label} errored: ${err instanceof Error ? err.message : String(err)}`);
   }
-
-  if (remaining.length > 0) {
-    log(`Batch ${batchNo}: dropping ${remaining.length} profiles still unassigned after retry`);
-  }
-  return { assigned, dropped: remaining, retried };
 }
 
 export async function clusterProfiles(
@@ -280,23 +260,50 @@ export async function clusterProfiles(
   log(`Pass 2b: classifying ${profiles.length} profiles in ${batches.length} parallel batches of ≤${batchSize}…`);
 
   const labels = archetypes.map((a) => a.label);
+  const assigned = new Map<string, string>(); // person id → canonical label
 
-  const batchResults = await Promise.all(
-    batches.map((batch, i) => classifyBatchResilient(roleDescription, archetypes, batch, i + 1, log)),
+  // Wave 1 — parallel first attempts, with bounded concurrency. Constrained
+  // decoding has been observed to degrade under concurrent load (arrays
+  // closed early with only a few assignments), so retries do NOT happen here.
+  const concurrency = Number(process.env.CLASSIFY_CONCURRENCY ?? "5");
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, batches.length) }, async () => {
+      while (next < batches.length) {
+        const i = next++;
+        await classifyAttempt(roleDescription, archetypes, batches[i], assigned, `Batch ${i + 1}`, log);
+      }
+    }),
   );
 
-  const retries = batchResults.filter((r) => r.retried).length;
-  const droppedAfterRetry = batchResults.flatMap((r) => r.dropped);
+  // Wave 2 — the single retry per unassigned profile (§6.5), run
+  // SEQUENTIALLY after the parallel wave so it executes under calm load.
+  let unassigned = profiles.filter((p) => !assigned.has(p.id));
+  const retries = unassigned.length > 0 ? Math.ceil(unassigned.length / batchSize) : 0;
+  if (unassigned.length > 0) {
+    log(`Retry wave: ${unassigned.length} profiles unassigned after parallel pass, retrying sequentially`);
+    for (let i = 0; i < unassigned.length; i += batchSize) {
+      const chunk = unassigned.slice(i, i + batchSize);
+      await classifyAttempt(
+        roleDescription, archetypes, chunk, assigned, `Retry chunk ${i / batchSize + 1}`, log,
+        `it did not include every person. You MUST return exactly one assignment for every id from 1 to ${chunk.length}`,
+      );
+    }
+  }
+
+  // After the retry, anyone still unassigned is dropped and logged (§6.5).
+  const droppedAfterRetry = profiles.filter((p) => !assigned.has(p.id));
+  if (droppedAfterRetry.length > 0) {
+    log(`Dropping ${droppedAfterRetry.length} profiles still unassigned after retry`);
+  }
 
   // Final code-side accounting check (PRD §6.5): assigned ∪ dropped must
-  // cover every input exactly once. This cannot fail given the worker's
-  // construction, but the product promise is verified counts — so verify.
-  const assignedIds = new Set(batchResults.flatMap((r) => [...r.assigned.keys()]));
+  // cover every input exactly once. This cannot fail given the construction
+  // above, but the product promise is verified counts — so verify.
   const droppedIds = new Set(droppedAfterRetry.map((p) => p.id));
   for (const p of profiles) {
-    const inAssigned = assignedIds.has(p.id);
-    if (inAssigned === droppedIds.has(p.id)) {
-      throw new Error(`Accounting violation: profile ${p.id} is ${inAssigned ? "double-counted" : "unaccounted for"}`);
+    if (assigned.has(p.id) === droppedIds.has(p.id)) {
+      throw new Error(`Accounting violation: profile ${p.id} is ${assigned.has(p.id) ? "double-counted" : "unaccounted for"}`);
     }
   }
 
@@ -305,12 +312,10 @@ export async function clusterProfiles(
   const notRelevant: CleanProfile[] = [];
   const profileById = new Map(profiles.map((p) => [p.id, p]));
 
-  for (const { assigned } of batchResults) {
-    for (const [id, label] of assigned) {
-      const profile = profileById.get(id)!;
-      if (label === NOT_RELEVANT) notRelevant.push(profile);
-      else byLabel.get(label)!.push(profile);
-    }
+  for (const [id, label] of assigned) {
+    const profile = profileById.get(id)!;
+    if (label === NOT_RELEVANT) notRelevant.push(profile);
+    else byLabel.get(label)!.push(profile);
   }
 
   const relevantTotal = [...byLabel.values()].reduce((n, m) => n + m.length, 0);

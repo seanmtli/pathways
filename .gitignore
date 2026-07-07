@@ -3,3 +3,4 @@ node_modules/
 .next/
 data/
 .DS_Store
+seed-run*.log

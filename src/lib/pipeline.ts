@@ -167,6 +167,22 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
       let pull;
       try {
         pull = await retryOnce("fetch", key, () => searchPeople(parsed.crustdataFilter!));
+        // Fail-open: an industry-constrained pull that matches almost nothing
+        // usually means the industry name isn't in the vendor's taxonomy —
+        // retry on titles alone rather than showing a false thin-data state.
+        // (A near-empty pull costs ~nothing, so this stays within budget.)
+        if (
+          pull.profiles.length < config.minUsableProfiles() &&
+          parsed.titleOnlyFilter &&
+          parsed.titleOnlyFilter !== parsed.crustdataFilter
+        ) {
+          stage("fetching", "broadening: industry filter matched too few");
+          const broadPull = await retryOnce("fetch", key, () => searchPeople(parsed.titleOnlyFilter!));
+          if (broadPull.profiles.length > pull.profiles.length) {
+            await db.addSpend(pull.estimatedCredits);
+            pull = broadPull;
+          }
+        }
       } catch {
         // Crustdata down/unresponsive → cached-only mode, same UX as the
         // spend-ceiling degrade (§6.7). Never a blank error screen.

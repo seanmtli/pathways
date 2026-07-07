@@ -8,7 +8,8 @@
     "start": "next start",
     "phase1": "node --env-file=.env src/scripts/phase1.ts",
     "role": "node --env-file=.env src/scripts/run-role.ts",
-    "test:limits": "node --env-file=.env src/scripts/test-limits.ts"
+    "test:limits": "node --env-file=.env src/scripts/test-limits.ts",
+    "seed": "node --env-file=.env src/scripts/seed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
