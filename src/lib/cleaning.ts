@@ -25,7 +25,7 @@ export interface CleanProfile {
 // PRD §6.4: advisory/board/volunteer patterns to skip when resolving the
 // primary current role.
 const ADVISORY_PATTERN =
-  /\b(advisor|adviser|advisory|board member|board of directors|mentor|volunteer|investor)\b/i;
+  /\b(advisor|adviser|advisory|board (member|observer|director)|board of directors|mentor|volunteer|angel investor)\b/i;
 
 function ym(date: string | null): string | null {
   if (!date) return null;
@@ -119,7 +119,7 @@ export function cleanProfiles(raw: RawProfile[]): { profiles: CleanProfile[]; st
 }
 
 /** Compact one-line-per-role text form of a career history for LLM prompts. */
-export function careerSummary(p: CleanProfile): string {
+export function careerSummary(p: CleanProfile, idOverride?: string): string {
   const path = p.history
     .map((r) => {
       const span = r.start ? `${r.start.slice(0, 4)}–${r.end ? r.end.slice(0, 4) : "now"}` : "dates unknown";
@@ -128,5 +128,5 @@ export function careerSummary(p: CleanProfile): string {
     .join(" → ");
   const edu = p.education.map((e) => (e.degree ? `${e.school} (${e.degree})` : e.school)).join("; ") || "none listed";
   const yoe = p.yearsExperience !== null ? `~${p.yearsExperience}y experience` : "experience unknown";
-  return `[${p.id}] Current: ${p.currentTitle} @ ${p.currentCompany}. ${yoe}. Path: ${path}. Education: ${edu}`;
+  return `[${idOverride ?? p.id}] Current: ${p.currentTitle} @ ${p.currentCompany}. ${yoe}. Path: ${path}. Education: ${edu}`;
 }

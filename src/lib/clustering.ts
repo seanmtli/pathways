@@ -105,7 +105,7 @@ Rules:
 
 Career histories (sample of ${sample.length} professionals):
 
-${sample.map(careerSummary).join("\n")}`;
+${sample.map((p) => careerSummary(p)).join("\n")}`;
 
   const { archetypes } = await jsonCall<{ archetypes: Archetype[] }>({
     system,
@@ -124,7 +124,13 @@ ${sample.map(careerSummary).join("\n")}`;
 
 const NOT_RELEVANT = "not_relevant";
 
-function classifySchema(labels: string[]): Record<string, unknown> {
+// Guardrail: the id field is enum-constrained to this batch's ordinal ids
+// ("1".."30"), so a hallucinated id is structurally impossible. Ordinals keep
+// the schema far below the API's compilation-complexity limit (long numeric
+// person-id enums were observed to hit "Schema is too complex" 400s and to
+// degrade enforcement near the limit) and are trivial for the model to copy.
+// Missing people remain possible — caught by the resilient worker below.
+function classifySchema(labels: string[], ordinals: string[]): Record<string, unknown> {
   return {
     type: "object",
     properties: {
@@ -133,7 +139,7 @@ function classifySchema(labels: string[]): Record<string, unknown> {
         items: {
           type: "object",
           properties: {
-            id: { type: "string" },
+            id: { type: "string", enum: ordinals },
             archetype: { type: "string", enum: [...labels, NOT_RELEVANT] },
           },
           required: ["id", "archetype"],
@@ -152,30 +158,22 @@ interface Assignment {
 }
 
 /**
- * Code-side validation (PRD §6.5): every input id exactly once, nothing
- * invented, every archetype label from the fixed set.
+ * Case/whitespace-insensitive label normalization. Structured-output schemas
+ * enforce the enum on most calls, but enforcement has been observed to
+ * degrade intermittently under parallel load — a trivially-off label
+ * ("...To PM" vs "...to PM") should be coerced, not thrown away.
  */
-export function validateAssignments(batch: CleanProfile[], assignments: Assignment[], labels: string[]): string | null {
-  const validLabels = new Set([...labels, NOT_RELEVANT]);
-  const inputIds = new Set(batch.map((p) => p.id));
-  const seen = new Set<string>();
-  for (const a of assignments) {
-    if (!inputIds.has(a.id)) return `hallucinated id ${a.id}`;
-    if (seen.has(a.id)) return `duplicate id ${a.id}`;
-    if (!validLabels.has(a.archetype)) return `unknown archetype "${a.archetype}"`;
-    seen.add(a.id);
-  }
-  if (seen.size !== inputIds.size) {
-    const missing = [...inputIds].filter((id) => !seen.has(id));
-    return `missing ids: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}`;
-  }
-  return null;
+function labelNormalizer(labels: string[]): (raw: string) => string | null {
+  const map = new Map(labels.map((l) => [l.trim().toLowerCase(), l]));
+  map.set(NOT_RELEVANT, NOT_RELEVANT);
+  return (raw) => map.get(raw.trim().toLowerCase()) ?? null;
 }
 
 async function classifyBatch(
   roleDescription: string,
   archetypes: Archetype[],
   batch: CleanProfile[],
+  feedback?: string,
 ): Promise<Assignment[]> {
   const labels = archetypes.map((a) => a.label);
   const system = `You are classifying professionals into fixed career-path archetypes for the target role: ${roleDescription}
@@ -186,17 +184,82 @@ ${archetypes.map((a) => `- "${a.label}": ${a.description} Signals: ${a.signals.j
 Rules:
 - Assign each person to exactly ONE archetype label (verbatim from the list) — the single best fit for how they reached their current role.
 - If a person is clearly NOT actually in or closely adjacent to the target role (a false positive from the data vendor — wrong industry, wrong function, or a title match that means something else), assign "${NOT_RELEVANT}" instead. Be strict: relevance means their current role genuinely matches the target role.
-- Return exactly one assignment per input person, keyed by their [id]. Do not skip anyone; do not invent ids.`;
+- Interns, summer associates/analysts, students, and trainees are "${NOT_RELEVANT}" — they do not yet hold the role.
+- Return exactly one assignment per input person, keyed by their [id]. The assignments array must have exactly ${batch.length} entries — one for each id from 1 to ${batch.length}. Do not skip anyone.`;
 
-  const user = `Classify these ${batch.length} people:\n\n${batch.map(careerSummary).join("\n")}`;
+  // People are numbered 1..N for this call; ordinals map back to person ids here.
+  const ordinals = batch.map((_, i) => String(i + 1));
+  const user =
+    `Classify these ${batch.length} people:\n\n${batch.map((p, i) => careerSummary(p, ordinals[i])).join("\n")}` +
+    (feedback ? `\n\nIMPORTANT — your previous attempt was rejected: ${feedback}. Return an assignment for every id listed above.` : "");
 
-  const { assignments } = await jsonCall<{ assignments: Assignment[] }>({
+  const { assignments } = await jsonCall<{ assignments: { id: string; archetype: string }[] }>({
     system,
     user,
-    schema: classifySchema(labels),
+    schema: classifySchema(labels, ordinals),
     maxTokens: 6000,
   });
-  return assignments;
+
+  // Translate ordinals → real person ids; anything unparseable is discarded
+  // here and picked up by the coverage retry in the worker.
+  const out: Assignment[] = [];
+  for (const a of assignments) {
+    const idx = Number(a.id) - 1;
+    if (Number.isInteger(idx) && idx >= 0 && idx < batch.length) {
+      out.push({ id: batch[idx].id, archetype: a.archetype });
+    }
+  }
+  return out;
+}
+
+/**
+ * Resilient batch worker implementing the §6.5 validation contract:
+ * - every valid, first-occurrence assignment with an in-batch id is kept
+ *   (hallucinated ids are impossible via the schema enum AND rejected here);
+ * - anyone left unassigned gets exactly one retry, in a smaller call
+ *   containing only the unassigned people plus explicit feedback;
+ * - anyone still unassigned after the retry is dropped and logged.
+ */
+async function classifyBatchResilient(
+  roleDescription: string,
+  archetypes: Archetype[],
+  batch: CleanProfile[],
+  batchNo: number,
+  log: (msg: string) => void,
+): Promise<{ assigned: Map<string, string>; dropped: CleanProfile[]; retried: boolean }> {
+  const normalize = labelNormalizer(archetypes.map((a) => a.label));
+  const assigned = new Map<string, string>(); // person id → canonical label
+  let remaining = batch;
+  let retried = false;
+
+  for (let attempt = 0; attempt < 2 && remaining.length > 0; attempt++) {
+    // The retry call re-renders the unassigned subset with fresh ordinals,
+    // so feedback demands full coverage rather than naming ids.
+    const feedback =
+      attempt > 0
+        ? `it did not include every person. You MUST return exactly one assignment for every id from 1 to ${remaining.length}`
+        : undefined;
+    try {
+      const assignments = await classifyBatch(roleDescription, archetypes, remaining, feedback);
+      const remainingIds = new Set(remaining.map((p) => p.id));
+      for (const a of assignments) {
+        const label = normalize(a.archetype);
+        if (label !== null && remainingIds.has(a.id) && !assigned.has(a.id)) assigned.set(a.id, label);
+      }
+    } catch (err) {
+      log(`Batch ${batchNo} attempt ${attempt + 1} errored: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    remaining = batch.filter((p) => !assigned.has(p.id));
+    if (remaining.length > 0 && attempt === 0) {
+      retried = true;
+      log(`Batch ${batchNo}: ${remaining.length}/${batch.length} unassigned after attempt 1, retrying just those`);
+    }
+  }
+
+  if (remaining.length > 0) {
+    log(`Batch ${batchNo}: dropping ${remaining.length} profiles still unassigned after retry`);
+  }
+  return { assigned, dropped: remaining, retried };
 }
 
 export async function clusterProfiles(
@@ -217,39 +280,36 @@ export async function clusterProfiles(
   log(`Pass 2b: classifying ${profiles.length} profiles in ${batches.length} parallel batches of ≤${batchSize}…`);
 
   const labels = archetypes.map((a) => a.label);
-  let retries = 0;
-  const droppedAfterRetry: CleanProfile[] = [];
 
   const batchResults = await Promise.all(
-    batches.map(async (batch, i) => {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const assignments = await classifyBatch(roleDescription, archetypes, batch);
-          const problem = validateAssignments(batch, assignments, labels);
-          if (problem === null) return assignments;
-          log(`Batch ${i + 1} attempt ${attempt + 1} failed validation: ${problem}`);
-        } catch (err) {
-          log(`Batch ${i + 1} attempt ${attempt + 1} errored: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        if (attempt === 0) retries++;
-      }
-      // PRD §6.5: after one retry, drop these specific profiles and log it.
-      log(`Batch ${i + 1}: dropping ${batch.length} profiles after failed retry`);
-      droppedAfterRetry.push(...batch);
-      return [] as Assignment[];
-    }),
+    batches.map((batch, i) => classifyBatchResilient(roleDescription, archetypes, batch, i + 1, log)),
   );
+
+  const retries = batchResults.filter((r) => r.retried).length;
+  const droppedAfterRetry = batchResults.flatMap((r) => r.dropped);
+
+  // Final code-side accounting check (PRD §6.5): assigned ∪ dropped must
+  // cover every input exactly once. This cannot fail given the worker's
+  // construction, but the product promise is verified counts — so verify.
+  const assignedIds = new Set(batchResults.flatMap((r) => [...r.assigned.keys()]));
+  const droppedIds = new Set(droppedAfterRetry.map((p) => p.id));
+  for (const p of profiles) {
+    const inAssigned = assignedIds.has(p.id);
+    if (inAssigned === droppedIds.has(p.id)) {
+      throw new Error(`Accounting violation: profile ${p.id} is ${inAssigned ? "double-counted" : "unaccounted for"}`);
+    }
+  }
 
   // Aggregate — counts and percentages computed in code only.
   const byLabel = new Map<string, CleanProfile[]>(labels.map((l) => [l, []]));
   const notRelevant: CleanProfile[] = [];
   const profileById = new Map(profiles.map((p) => [p.id, p]));
 
-  for (const assignments of batchResults) {
-    for (const a of assignments) {
-      const profile = profileById.get(a.id)!;
-      if (a.archetype === NOT_RELEVANT) notRelevant.push(profile);
-      else byLabel.get(a.archetype)!.push(profile);
+  for (const { assigned } of batchResults) {
+    for (const [id, label] of assigned) {
+      const profile = profileById.get(id)!;
+      if (label === NOT_RELEVANT) notRelevant.push(profile);
+      else byLabel.get(label)!.push(profile);
     }
   }
 

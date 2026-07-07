@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "phase1": "node --env-file=.env src/scripts/phase1.ts"
+    "phase1": "node --env-file=.env src/scripts/phase1.ts",
+    "role": "node --env-file=.env src/scripts/run-role.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.74.0"
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@supabase/supabase-js": "^2.110.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
