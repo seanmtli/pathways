@@ -2,6 +2,7 @@
 // The database is a cache and ledger, not a warehouse (PRD §6.1).
 
 import { createClient } from "@supabase/supabase-js";
+import { config } from "./config.ts";
 import type { Cluster, ClusteringResult } from "./clustering.ts";
 import type { CleanProfile } from "./cleaning.ts";
 import type { CrustdataFilter } from "./crustdata.ts";
@@ -17,8 +18,11 @@ export const supabase = createClient(env("SUPABASE_URL"), env("SUPABASE_SERVICE_
 });
 
 function freshnessCutoff(): string {
-  const days = Number(process.env.CACHE_FRESHNESS_DAYS ?? "30");
-  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  return new Date(Date.now() - config.cacheFreshnessDays() * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function oneHourAgo(): string {
+  return new Date(Date.now() - 60 * 60 * 1000).toISOString();
 }
 
 // ---------- cached_searches ----------
@@ -129,11 +133,21 @@ export async function getTodaySpend(): Promise<number> {
   return data ? Number((data as { credits: number }).credits) : 0;
 }
 
+export type SearchOutcome =
+  | "in_progress"       // request started, hit/miss not yet known
+  | "miss_in_progress"  // cache miss confirmed, paid work underway
+  | "ok"
+  | "thin_data"
+  | "invalid_query"
+  | "degraded"
+  | "error"
+  | "rate_limited";
+
 export interface SearchLogEntry {
   raw_query: string;
   canonical_key?: string | null;
   cache_hit: boolean;
-  outcome: "ok" | "thin_data" | "invalid_query" | "degraded" | "error" | "rate_limited";
+  outcome: SearchOutcome;
   session_token?: string | null;
   ip?: string | null;
   latency_ms?: number;
@@ -142,6 +156,83 @@ export interface SearchLogEntry {
 export async function logSearch(entry: SearchLogEntry): Promise<void> {
   const { error } = await supabase.from("pw_search_log").insert(entry);
   if (error) console.error(`logSearch failed: ${error.message}`); // never fail a request over logging
+}
+
+/**
+ * Two-phase logging: a row is written when the request starts (and updated to
+ * miss_in_progress when a paid path begins) so that in-flight requests count
+ * toward rate limits — a burst of concurrent misses can't slip under the cap
+ * during the ~40s a cache miss takes to complete.
+ */
+export async function startSearchLog(entry: Pick<SearchLogEntry, "raw_query" | "session_token" | "ip">): Promise<number | null> {
+  const { data, error } = await supabase
+    .from("pw_search_log")
+    .insert({ ...entry, cache_hit: false, outcome: "in_progress" })
+    .select("id")
+    .single();
+  if (error) {
+    console.error(`startSearchLog failed: ${error.message}`);
+    return null; // logging must never take the product down
+  }
+  return (data as { id: number }).id;
+}
+
+export async function updateSearchLog(
+  id: number | null,
+  patch: Partial<Pick<SearchLogEntry, "canonical_key" | "cache_hit" | "outcome" | "latency_ms">>,
+): Promise<void> {
+  if (id === null) return;
+  const { error } = await supabase.from("pw_search_log").update(patch).eq("id", id);
+  if (error) console.error(`updateSearchLog failed: ${error.message}`);
+}
+
+// Outcomes that represent (actual or in-flight) paid cache-miss work.
+const MISS_OUTCOMES = ["miss_in_progress", "ok", "thin_data", "error"];
+
+export async function countSessionSearches(sessionToken: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("pw_search_log")
+    .select("id", { count: "exact", head: true })
+    .eq("session_token", sessionToken)
+    .gte("created_at", oneHourAgo());
+  if (error) throw new Error(`countSessionSearches: ${error.message}`);
+  return count ?? 0;
+}
+
+export async function countSessionMisses(sessionToken: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("pw_search_log")
+    .select("id", { count: "exact", head: true })
+    .eq("session_token", sessionToken)
+    .eq("cache_hit", false)
+    .in("outcome", MISS_OUTCOMES)
+    .gte("created_at", oneHourAgo());
+  if (error) throw new Error(`countSessionMisses: ${error.message}`);
+  return count ?? 0;
+}
+
+export async function countIpMisses(ip: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("pw_search_log")
+    .select("id", { count: "exact", head: true })
+    .eq("ip", ip)
+    .eq("cache_hit", false)
+    .in("outcome", MISS_OUTCOMES)
+    .gte("created_at", oneHourAgo());
+  if (error) throw new Error(`countIpMisses: ${error.message}`);
+  return count ?? 0;
+}
+
+/** Previously analyzed roles — the escape hatch shown in degraded/error states. */
+export async function listCachedRoles(limit = 8): Promise<{ canonical_key: string; role_description: string }[]> {
+  const { data, error } = await supabase
+    .from("pw_cached_searches")
+    .select("canonical_key, role_description")
+    .gte("refreshed_at", freshnessCutoff())
+    .order("refreshed_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`listCachedRoles: ${error.message}`);
+  return (data ?? []) as { canonical_key: string; role_description: string }[];
 }
 
 export async function logPipelineError(stage: string, canonicalKey: string | null, message: string): Promise<void> {

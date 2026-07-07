@@ -17,11 +17,18 @@ function fmtPerson(p: CleanProfile): string {
 
 const result = await runPipeline(query, {
   sessionToken: "dev-cli",
+  skipLimits: process.env.ENFORCE_LIMITS !== "1", // CLI skips limits unless testing them
   onStage: (stage, detail) => console.log(`  [${stage}]${detail ? ` ${detail}` : ""}`),
 });
 
 if (result.kind === "invalid_query") {
   console.log(`\nNot a role query. Suggestions: ${result.suggestions.join(" · ")}`);
+} else if (result.kind === "rate_limited") {
+  console.log(`\nRATE LIMITED (${result.scope}). Cached roles: ${result.availableRoles.map((r) => r.role_description).join(" · ")}`);
+} else if (result.kind === "degraded") {
+  console.log(`\nDEGRADED (${result.reason}) — cached-only mode. Cached roles: ${result.availableRoles.map((r) => r.role_description).join(" · ")}`);
+} else if (result.kind === "error") {
+  console.log(`\nERROR state. Cached roles offered: ${result.availableRoles.map((r) => r.role_description).join(" · ")}`);
 } else if (result.kind === "thin_data") {
   console.log(
     `\nTHIN DATA (${result.usableProfiles} usable profiles) for ${result.canonicalKey}. Broader queries: ${result.suggestions.join(" · ")}`,

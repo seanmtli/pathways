@@ -30,4 +30,13 @@ export const config = {
 
   // Thin-data threshold (PRD §5.6)
   minUsableProfiles: () => intEnv("MIN_USABLE_PROFILES", "30"),
+
+  // Rate limiting & cost control (PRD §6.6) — all env-tunable
+  sessionMissPerHour: () => intEnv("RATE_LIMIT_SESSION_MISS_PER_HOUR", "5"),
+  sessionTotalPerHour: () => intEnv("RATE_LIMIT_SESSION_TOTAL_PER_HOUR", "60"),
+  ipMissPerHour: () => intEnv("RATE_LIMIT_IP_MISS_PER_HOUR", "50"),
+  dailyCreditCeiling: () => Number(env("DAILY_CREDIT_CEILING", "300")),
+
+  // Cache freshness window in days (PRD §6.8)
+  cacheFreshnessDays: () => intEnv("CACHE_FRESHNESS_DAYS", "30"),
 };

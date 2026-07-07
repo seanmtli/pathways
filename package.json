@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "phase1": "node --env-file=.env src/scripts/phase1.ts",
-    "role": "node --env-file=.env src/scripts/run-role.ts"
+    "role": "node --env-file=.env src/scripts/run-role.ts",
+    "test:limits": "node --env-file=.env src/scripts/test-limits.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
