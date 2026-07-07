@@ -1,0 +1,33 @@
+// All cost/limit constants live here and come from environment variables (PRD §8).
+// Values are read lazily so tests/scripts can override process.env before use.
+
+function env(name: string, fallback?: string): string {
+  const v = process.env[name] ?? fallback;
+  if (v === undefined) throw new Error(`Missing required env var: ${name}`);
+  return v;
+}
+
+function intEnv(name: string, fallback: string): number {
+  const n = Number.parseInt(env(name, fallback), 10);
+  if (Number.isNaN(n)) throw new Error(`Env var ${name} is not a number`);
+  return n;
+}
+
+export const config = {
+  crustdataApiKey: () => env("CRUSTDATA_API_KEY"),
+
+  // Cost levers (PRD §6.4, §8)
+  pullCap: () => intEnv("CRUSTDATA_PULL_CAP", "400"),
+  creditsPerResult: () => Number(env("CRUSTDATA_CREDITS_PER_RESULT", "0.03")),
+
+  // Model IDs (PRD §6.1) — must be env-configurable, never hardcoded at call sites
+  parseModel: () => env("LLM_PARSE_MODEL", "claude-haiku-4-5-20251001"),
+  clusterModel: () => env("LLM_CLUSTER_MODEL", "claude-sonnet-4-6"),
+
+  // Clustering knobs (PRD §6.5)
+  archetypeSampleSize: () => intEnv("ARCHETYPE_SAMPLE_SIZE", "70"),
+  classifyBatchSize: () => intEnv("CLASSIFY_BATCH_SIZE", "30"),
+
+  // Thin-data threshold (PRD §5.6)
+  minUsableProfiles: () => intEnv("MIN_USABLE_PROFILES", "30"),
+};
