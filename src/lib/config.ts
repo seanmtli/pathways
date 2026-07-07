@@ -20,9 +20,10 @@ export const config = {
   pullCap: () => intEnv("CRUSTDATA_PULL_CAP", "400"),
   creditsPerResult: () => Number(env("CRUSTDATA_CREDITS_PER_RESULT", "0.03")),
 
-  // Model IDs (PRD §6.1) — must be env-configurable, never hardcoded at call sites
-  parseModel: () => env("LLM_PARSE_MODEL", "claude-haiku-4-5-20251001"),
-  clusterModel: () => env("LLM_CLUSTER_MODEL", "claude-sonnet-4-6"),
+  // Model slugs on OpenRouter (PRD §6.1) — env-configurable, never hardcoded
+  // at call sites. Any OpenRouter model with structured-output support works.
+  parseModel: () => env("LLM_PARSE_MODEL", "google/gemini-2.5-flash-lite"),
+  clusterModel: () => env("LLM_CLUSTER_MODEL", "google/gemini-3-flash-preview"),
 
   // Clustering knobs (PRD §6.5)
   archetypeSampleSize: () => intEnv("ARCHETYPE_SAMPLE_SIZE", "70"),

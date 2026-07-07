@@ -8,11 +8,9 @@
 // Percentages are computed in code from final assignments — never taken from
 // LLM output.
 
-import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.ts";
+import { jsonCall as llmJsonCall } from "./llm.ts";
 import { careerSummary, type CleanProfile } from "./cleaning.ts";
-
-const anthropic = new Anthropic();
 
 export interface Archetype {
   label: string;
@@ -41,22 +39,13 @@ export interface ClusteringResult {
   };
 }
 
-async function jsonCall<T>(opts: {
+function jsonCall<T>(opts: {
   system: string;
   user: string;
   schema: Record<string, unknown>;
   maxTokens: number;
 }): Promise<T> {
-  const response = await anthropic.messages.create({
-    model: config.clusterModel(),
-    max_tokens: opts.maxTokens,
-    system: opts.system,
-    messages: [{ role: "user", content: opts.user }],
-    output_config: { format: { type: "json_schema", schema: opts.schema } },
-  });
-  const text = response.content.find((b) => b.type === "text")?.text;
-  if (!text) throw new Error(`LLM returned no text block (stop_reason: ${response.stop_reason})`);
-  return JSON.parse(text) as T;
+  return llmJsonCall<T>({ model: config.clusterModel(), ...opts });
 }
 
 /** Evenly-spaced sample across the pull so the archetype pass sees the spread. */

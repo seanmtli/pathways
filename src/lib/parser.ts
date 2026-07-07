@@ -6,11 +6,9 @@
 // The parser emits title variants and industry names; the Crustdata filter is
 // constructed in code (never trusted raw from the LLM), using OR-groups only.
 
-import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.ts";
+import { jsonCall } from "./llm.ts";
 import { fuzzyOr, type CrustdataFilter } from "./crustdata.ts";
-
-const anthropic = new Anthropic();
 
 export interface CanonicalRole {
   title_family: string;
@@ -94,16 +92,13 @@ export function canonicalKeyOf(role: CanonicalRole): string {
 }
 
 export async function parseQuery(rawQuery: string): Promise<ParseResult> {
-  const response = await anthropic.messages.create({
+  const raw = await jsonCall<RawParse>({
     model: config.parseModel(),
-    max_tokens: 1500,
     system: SYSTEM,
-    messages: [{ role: "user", content: `Query: ${rawQuery.slice(0, 300)}` }],
-    output_config: { format: { type: "json_schema", schema: PARSE_SCHEMA } },
+    user: `Query: ${rawQuery.slice(0, 300)}`,
+    schema: PARSE_SCHEMA,
+    maxTokens: 4000,
   });
-  const text = response.content.find((b) => b.type === "text")?.text;
-  if (!text) throw new Error(`Parser returned no text (stop_reason: ${response.stop_reason})`);
-  const raw = JSON.parse(text) as RawParse;
 
   if (!raw.is_valid_role_query || !raw.canonical_role.title_family) {
     return {

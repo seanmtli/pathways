@@ -86,10 +86,10 @@ npm run test:limits                          # verify protection gates
 | Var | Default | Purpose |
 |---|---|---|
 | `CRUSTDATA_API_KEY` | — | Crustdata production REST API key |
-| `ANTHROPIC_API_KEY` | — | Anthropic API key |
+| `OPENROUTER_API_KEY` | — | OpenRouter API key (all LLM calls route through OpenRouter) |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | — | Postgres cache + ledger (service role; server-side only) |
-| `LLM_PARSE_MODEL` | `claude-haiku-4-5-20251001` | LLM 1 (parsing) |
-| `LLM_CLUSTER_MODEL` | `claude-sonnet-4-6` | LLM 2a/2b (clustering — output quality here *is* the product) |
+| `LLM_PARSE_MODEL` | `google/gemini-2.5-flash-lite` | LLM 1 (parsing) — any OpenRouter slug with structured outputs |
+| `LLM_CLUSTER_MODEL` | `google/gemini-3-flash-preview` | LLM 2a/2b (clustering — output quality here *is* the product) |
 | `CRUSTDATA_PULL_CAP` | 400 | Max profiles per query — the primary cost lever |
 | `DAILY_CREDIT_CEILING` | 300 | Global daily Crustdata credit cap |
 | `RATE_LIMIT_SESSION_MISS_PER_HOUR` | 5 | Paid searches per visitor/hour |
@@ -105,8 +105,8 @@ npm run test:limits                          # verify protection gates
 - [x] **Phase 1** — single hardcoded role, end to end
 - [x] **Phase 2** — generalized pipeline + Supabase persistence + synonym-collapsing cache
 - [x] **Phase 3** — rate limiting, spend ceiling, graceful degradation + operator runbook
-- [ ] **Phase 4** — frontend (Next.js: landing, staged loading, cluster cards, Explore Path, feedback)
-- [ ] **Phase 5** — seed all 32 roles + golden-set QA gate before any external tester
+- [x] **Phase 4** — frontend (Next.js: landing, staged loading, cluster cards, Explore Path, feedback)
+- [x] **Phase 5** — all 32 seed roles pre-computed; golden-set QA review in progress
 
-Known open item: cache-miss latency is ~36–55s against the PRD's <20s target;
-mitigated by honest staged loading copy, revisit before launch.
+Cache-miss latency: ~25-65s depending on role size (PRD target <20s); staged
+loading copy keeps it honest. Reclustering from a stored pull runs ~21-30s.
