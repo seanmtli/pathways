@@ -64,9 +64,10 @@ Output fields:
 
 3. role_description — one human-readable line describing the target role, used in prompts and UI headers (e.g. "Product Manager at a venture-backed startup").
 
-4. title_variants — 3 to 6 job-title strings for substring matching against current job titles in a professional-profiles database. Include the common synonyms and abbreviation forms actually used in job titles. Keep each variant short and high-precision; avoid single generic words like "data" or "manager" that would match unrelated roles.
+4. title_variants — 3 to 6 job-title strings for substring matching against current job titles in a professional-profiles database. Write titles EXACTLY the way they appear on a business card — NEVER concatenate the industry or employer type into the title. People at hedge funds are titled "Investment Analyst" or "Analyst", not "hedge fund analyst"; the industry lives in industry_values. Include common synonyms and abbreviation forms. A short generic title (e.g. "Analyst") is fine when industry_values constrains the employer; without an industry constraint, keep variants specific enough not to match unrelated roles.
+   Example: query "hedge fund analyst" → title_variants ["Investment Analyst", "Research Analyst", "Equity Analyst", "Analyst"], industry_values ["Hedge Funds", "Investment Management"].
 
-5. industry_values — LinkedIn-style industry category names for the employer, e.g. "Spectator Sports", "Venture Capital and Private Equity Principals", "Investment Banking", "Software Development". Empty array if the role is not industry-constrained (the title alone is specific enough) OR if the industry constraint is better expressed in the titles themselves.
+5. industry_values — LinkedIn-style industry category names for the employer, e.g. "Spectator Sports", "Hedge Funds", "Investment Management", "Venture Capital and Private Equity Principals", "Software Development". Choose the categories the actual employers would list themselves under — not adjacent industries. Empty array if the role is not industry-constrained (the title alone is specific enough).
 
 6. suggestions — 2-3 example role queries. If the query is invalid, suggest concrete roles ("sports agent", "VP of product"). If valid, suggest broader or adjacent versions of THIS role (used when data is too thin).
 

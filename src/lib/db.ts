@@ -252,3 +252,32 @@ export async function insertFeedback(row: {
   const { error } = await supabase.from("pw_feedback").insert(row);
   if (error) throw new Error(`insertFeedback: ${error.message}`);
 }
+
+/**
+ * Attach a comment to this session's most recent thumb on a cluster (the
+ * widget stores the thumb instantly, then lets the user add one line).
+ */
+export async function amendFeedbackComment(row: {
+  canonical_key: string;
+  cluster_label: string;
+  session_token: string;
+  comment: string;
+}): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("pw_feedback")
+    .select("id")
+    .eq("canonical_key", row.canonical_key)
+    .eq("cluster_label", row.cluster_label)
+    .eq("session_token", row.session_token)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`amendFeedbackComment: ${error.message}`);
+  if (!data) return false;
+  const { error: updateError } = await supabase
+    .from("pw_feedback")
+    .update({ comment: row.comment })
+    .eq("id", (data as { id: number }).id);
+  if (updateError) throw new Error(`amendFeedbackComment: ${updateError.message}`);
+  return true;
+}

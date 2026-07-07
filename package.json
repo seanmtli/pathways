@@ -3,16 +3,25 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "phase1": "node --env-file=.env src/scripts/phase1.ts",
     "role": "node --env-file=.env src/scripts/run-role.ts",
     "test:limits": "node --env-file=.env src/scripts/test-limits.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
-    "@supabase/supabase-js": "^2.110.0"
+    "@supabase/supabase-js": "^2.110.0",
+    "next": "^15.5.20",
+    "posthog-js": "^1.398.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "typescript": "^5.7.0"
   }
 }

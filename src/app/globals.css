@@ -1,0 +1,186 @@
+/* Pathways design tokens — see DESIGN.md. Field atlas: deep-spruce identity,
+   paper data surface, mono data voice. */
+
+:root {
+  --bg: oklch(0.985 0.002 170);
+  --surface: oklch(1 0 0);
+  --ink: oklch(0.24 0.02 170);
+  --ink-soft: oklch(0.42 0.02 170);
+  --line: oklch(0.9 0.008 170);
+  --brand: oklch(0.38 0.08 170);
+  --brand-strong: oklch(0.32 0.07 172);
+  --brand-deep: oklch(0.26 0.045 175);
+  --brand-deep-2: oklch(0.22 0.04 178);
+  --brand-tint: oklch(0.94 0.02 170);
+  --bar: oklch(0.55 0.1 168);
+  --on-deep: oklch(0.97 0.005 170);
+  --on-deep-soft: oklch(0.82 0.02 170);
+  --warn-bg: oklch(0.95 0.04 85);
+  --warn-ink: oklch(0.4 0.09 70);
+  --focus: oklch(0.55 0.1 168);
+
+  --font-sans: var(--font-schibsted), system-ui, sans-serif;
+  --font-mono: var(--font-spline-mono), ui-monospace, monospace;
+
+  /* z-index scale */
+  --z-sticky: 10;
+  --z-toast: 40;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+h1, h2, h3 {
+  text-wrap: balance;
+  line-height: 1.15;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+  max-width: 70ch;
+  text-wrap: pretty;
+}
+
+a {
+  color: var(--brand);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--brand-tint);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Share bar growth — transform only, staggered per row via --i */
+@keyframes bar-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.bar-fill {
+  transform-origin: left;
+  animation: bar-grow 0.6s var(--ease-out-quint) both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.row-in {
+  animation: row-in 0.4s var(--ease-out-quint) both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.fade-in {
+  animation: fade-in 0.24s ease-out both;
+}
+
+/* Loading stage pulse on the active dot */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.pulse {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar-fill, .row-in, .fade-in, .pulse {
+    animation: none;
+  }
+}
+
+/* Explore Path roster: 12-col rows on wide screens, stacked cells on phones */
+.roster {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.roster > li {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.1fr) 2fr minmax(150px, 1.2fr) 56px 34px;
+  gap: 4px 16px;
+  align-items: baseline;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14.5px;
+}
+.roster .r-name { font-weight: 550; }
+.roster .r-role, .roster .r-edu { color: var(--ink-soft); }
+.roster .r-yoe { color: var(--ink-soft); text-align: right; }
+.roster .r-role, .roster .r-edu, .roster .r-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.roster-head {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.1fr) 2fr minmax(150px, 1.2fr) 56px 34px;
+  gap: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding-bottom: 8px;
+}
+
+@media (max-width: 639px) {
+  .roster-head { display: none; }
+  .roster > li {
+    grid-template-columns: 1fr 34px;
+    grid-template-areas:
+      "name link"
+      "role role"
+      "meta meta";
+    padding: 14px 0;
+  }
+  .roster .r-name { grid-area: name; white-space: normal; }
+  .roster .r-role { grid-area: role; white-space: normal; }
+  .roster .r-link { grid-area: link; justify-self: end; }
+  .roster .r-edu { grid-area: meta; }
+  .roster .r-edu::after { content: ""; }
+  .roster .r-yoe { display: none; }
+  .roster .r-edu[data-yoe]:not([data-yoe=""])::after {
+    content: " · " attr(data-yoe);
+  }
+}
