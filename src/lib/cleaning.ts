@@ -118,6 +118,53 @@ export function cleanProfiles(raw: RawProfile[]): { profiles: CleanProfile[]; st
   return { profiles: out, stats };
 }
 
+// ---------- Career-history signal extraction ----------
+//
+// Vendor histories are padded with committees, fellowships, accelerator
+// cohorts, and summer programs. Two orthogonal signals separate them from
+// employment, and neither alone is sufficient:
+//   1. vocabulary — a "Fellowship Co-Director" is not a job. Matched against
+//      "title · company" because the giveaway is often the organization
+//      ("Secretary · Colgate Finance Club"), not the title. `intern` carries a
+//      trailing boundary so it can't swallow "internal" / "international".
+//   2. duration — programs run weeks, jobs run months.
+//
+// Shared by the UI timeline and the exemplar ranker so both agree on what
+// counts as a career.
+
+const NOISE_PATTERN =
+  /\b(committee|clubs?|society|fellow|scholar|volunteer|ambassador|mentor|board (member|observer)|chapter|student|cohort|co-chair|chair|participant|accelerator|bootcamp|delegate|contributor|academy|summer program|undergraduate|campus|tutor|liaison|intern(ship)?s?\b)/i;
+
+const MIN_JOB_MONTHS = 6;
+
+export const isNoiseRole = (r: RoleEntry): boolean => NOISE_PATTERN.test(`${r.title} ${r.company}`);
+
+/** Months a role spanned; an ongoing role counts as long-running. */
+export function roleMonths(r: RoleEntry): number {
+  if (!r.end) return Infinity;
+  if (!r.start) return 0;
+  const [sy, sm] = r.start.split("-").map(Number);
+  const [ey, em] = r.end.split("-").map(Number);
+  return (ey - sy) * 12 + (em - sm);
+}
+
+/**
+ * The roles that actually constitute a career. Falls back progressively so a
+ * person with only short or oddly-titled roles is never reduced to nothing.
+ */
+export function substantiveHistory(history: RoleEntry[]): RoleEntry[] {
+  const jobs = history.filter((r) => !isNoiseRole(r) && roleMonths(r) >= MIN_JOB_MONTHS);
+  if (jobs.length >= 2) return jobs;
+  const nonNoise = history.filter((r) => !isNoiseRole(r));
+  return nonNoise.length >= 2 ? nonNoise : history;
+}
+
+/** Higher education only, unless that's all the person has. */
+export function higherEducation(p: CleanProfile): CleanProfile["education"] {
+  const higher = p.education.filter((e) => !/\b(high school|secondary school)\b/i.test(e.school));
+  return higher.length > 0 ? higher : p.education;
+}
+
 /** Compact one-line-per-role text form of a career history for LLM prompts. */
 export function careerSummary(p: CleanProfile, idOverride?: string): string {
   const path = p.history

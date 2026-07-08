@@ -10,7 +10,7 @@
 
 import { config } from "./config.ts";
 import { jsonCall as llmJsonCall } from "./llm.ts";
-import { careerSummary, type CleanProfile } from "./cleaning.ts";
+import { careerSummary, substantiveHistory, isNoiseRole, type CleanProfile } from "./cleaning.ts";
 
 export interface Archetype {
   label: string;
@@ -238,6 +238,132 @@ async function classifyAttempt(
   }
 }
 
+// ---------- Pass 2c: exemplar selection ----------
+//
+// The first three members of a cluster are the faces of that path — the first
+// thing a career explorer sees. Arbitrary order surfaces poor ambassadors (a
+// founder/VC profile heading an "IB → PE" cluster). So: score every member
+// for legibility in code, then have the model pick the most representative
+// three from the shortlist. Selection is validated in code (enum + id check),
+// with the heuristic order as the fallback — a bad LLM call degrades the
+// ordering, never the data.
+
+const EXEMPLAR_COUNT = 3;
+const SHORTLIST_SIZE = 24;
+
+/**
+ * How legible is this person's path as a story? Rewards a real, dated,
+ * multi-step history and penalizes vendor padding. Deterministic.
+ */
+function legibilityScore(p: CleanProfile): number {
+  const career = substantiveHistory(p.history);
+  const noiseRatio = p.history.length > 0 ? p.history.filter(isNoiseRole).length / p.history.length : 1;
+  const dated = career.filter((r) => r.start).length;
+
+  let score = 0;
+  score += Math.min(career.length, 5) * 2; // a path needs steps, with diminishing returns
+  score += Math.min(dated, 5); // undated roles can't be rendered on a timeline
+  score -= noiseRatio * 6; // mostly-padding histories read badly
+  if (career.length < 2) score -= 8; // no journey to show
+  if (p.education.length > 0) score += 1;
+  if (p.linkedinUrl) score += 1; // the reader can verify them
+  return score;
+}
+
+const EXEMPLAR_SCHEMA = (ordinals: string[]) => ({
+  type: "object",
+  properties: {
+    exemplar_ids: { type: "array", items: { type: "string", enum: ordinals } },
+  },
+  required: ["exemplar_ids"],
+  additionalProperties: false,
+});
+
+/**
+ * Order a cluster's members so the most representative appear first.
+ * Returns a new array; never drops or duplicates anyone.
+ */
+export async function rankExemplars(
+  roleDescription: string,
+  archetype: Archetype,
+  members: CleanProfile[],
+  log: (msg: string) => void = () => {},
+): Promise<CleanProfile[]> {
+  if (members.length <= EXEMPLAR_COUNT) return members;
+
+  const shortlist = [...members].sort((a, b) => legibilityScore(b) - legibilityScore(a)).slice(0, SHORTLIST_SIZE);
+  const ordinals = shortlist.map((_, i) => String(i + 1));
+
+  const system = `You are choosing the ${EXEMPLAR_COUNT} people who best exemplify one career path, for a career-exploration product. They will be shown as the faces of this path.
+
+Target role: ${roleDescription}
+Path: "${archetype.label}" — ${archetype.description}
+Distinguishing signals: ${archetype.signals.join("; ")}
+
+Choose the ${EXEMPLAR_COUNT} people whose career histories most clearly and typically embody THIS path:
+- Their journey should visibly follow the path's signals, not merely end at the target role.
+- Prefer the typical case over the exceptional or exotic one. A reader should think "so that's the standard route."
+- Their current role must genuinely be the target role.
+- Prefer legible histories: clear, dated steps a reader can follow.
+- Reject anyone whose story is mostly a different path (e.g. a lifelong founder heading a banking-to-buyout path).
+
+Return exactly ${EXEMPLAR_COUNT} ids, best first.`;
+
+  const user = `Candidates:\n\n${shortlist.map((p, i) => careerSummary(p, ordinals[i])).join("\n")}`;
+
+  const rest = (chosen: CleanProfile[]) => {
+    const chosenIds = new Set(chosen.map((p) => p.id));
+    return members.filter((p) => !chosenIds.has(p.id));
+  };
+
+  try {
+    const { exemplar_ids } = await llmJsonCall<{ exemplar_ids: string[] }>({
+      model: config.clusterModel(),
+      system,
+      user,
+      schema: EXEMPLAR_SCHEMA(ordinals),
+      maxTokens: 500,
+    });
+
+    // Validate in code: real ordinals, no duplicates, enough of them.
+    const picked: CleanProfile[] = [];
+    const seen = new Set<string>();
+    for (const raw of exemplar_ids) {
+      const idx = Number(raw) - 1;
+      if (Number.isInteger(idx) && idx >= 0 && idx < shortlist.length && !seen.has(shortlist[idx].id)) {
+        seen.add(shortlist[idx].id);
+        picked.push(shortlist[idx]);
+      }
+    }
+    if (picked.length < EXEMPLAR_COUNT) {
+      log(`Exemplars "${archetype.label}": only ${picked.length} valid picks, topping up from shortlist`);
+      for (const p of shortlist) {
+        if (picked.length >= EXEMPLAR_COUNT) break;
+        if (!seen.has(p.id)) { seen.add(p.id); picked.push(p); }
+      }
+    }
+    return [...picked, ...rest(picked)];
+  } catch (err) {
+    log(`Exemplars "${archetype.label}" failed (${err instanceof Error ? err.message : String(err)}); using heuristic order`);
+    const fallback = shortlist.slice(0, EXEMPLAR_COUNT);
+    return [...fallback, ...rest(fallback)];
+  }
+}
+
+/** Rank exemplars for every cluster, in parallel. Mutates nothing. */
+export async function rankAllExemplars(
+  roleDescription: string,
+  clusters: Cluster[],
+  log: (msg: string) => void = () => {},
+): Promise<Cluster[]> {
+  return Promise.all(
+    clusters.map(async (c) => ({
+      ...c,
+      members: await rankExemplars(roleDescription, c.archetype, c.members, log),
+    })),
+  );
+}
+
 /**
  * One full derive-and-classify round: 2a on a sample of `profiles`, then 2b
  * over all of them (parallel wave + sequential retry wave, §6.5).
@@ -370,7 +496,7 @@ export async function clusterProfiles(
   }
 
   const relevantTotal = [...byLabel.values()].reduce((n, m) => n + m.length, 0);
-  const clusters: Cluster[] = archetypes
+  const unranked: Cluster[] = archetypes
     .map((archetype) => {
       const members = byLabel.get(archetype.label)!;
       return {
@@ -380,6 +506,10 @@ export async function clusterProfiles(
       };
     })
     .sort((a, b) => b.members.length - a.members.length);
+
+  // Pass 2c — order each cluster's members so the best ambassadors lead.
+  log(`Pass 2c: selecting exemplars for ${unranked.length} clusters…`);
+  const clusters = await rankAllExemplars(roleDescription, unranked, log);
 
   return {
     clusters,
