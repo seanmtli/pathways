@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getFreshSearch } from "@/lib/db.ts";
-import { LinkedInLink } from "../../interactive.tsx";
+import { RosterRow } from "../../person-timeline.tsx";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,32 +71,13 @@ export default async function ExplorePathPage({
         <span />
       </div>
       <ul className="roster">
-        {cluster.members.map((p) => {
-          const edu = p.education[0]?.school ?? "—";
-          const yoe = p.yearsExperience !== null ? `~${p.yearsExperience}y` : "";
-          return (
-            <li key={p.id}>
-              <span className="r-name">{p.name}</span>
-              <span className="r-role">
-                {p.currentTitle}
-                {p.currentCompany ? ` · ${p.currentCompany}` : ""}
-              </span>
-              <span className="r-edu" data-yoe={yoe} title={p.education.map((e) => e.school).join("; ")}>
-                {edu}
-              </span>
-              <span className="r-loc" title={p.location ?? undefined}>
-                {p.location ? p.location.split(",").slice(0, 2).join(",") : "—"}
-              </span>
-              <span className="r-yoe mono">{yoe || "—"}</span>
-              <span className="r-link">
-                {p.linkedinUrl ? <LinkedInLink url={p.linkedinUrl} canonicalKey={search.canonical_key} /> : null}
-              </span>
-            </li>
-          );
-        })}
+        {cluster.members.map((p) => (
+          <RosterRow key={p.id} person={p} canonicalKey={search.canonical_key} />
+        ))}
       </ul>
 
       <p style={{ marginTop: 20, fontSize: 13, color: "var(--ink-soft)" }}>
+        Click any person to unfold the career path that got them here.
         Everyone above is currently in or near this role, per public
         professional profiles. Some LinkedIn links may be private or out of
         date — that's the data, not a promise.

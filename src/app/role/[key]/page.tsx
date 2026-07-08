@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getFreshSearch } from "@/lib/db.ts";
 import { FeedbackWidget, ResultsTracker, PathLink } from "./interactive.tsx";
+import { ExamplePerson } from "./person-timeline.tsx";
 import { EXAMPLE_CHIPS } from "@/lib/seeds.ts";
 
 export const runtime = "nodejs";
@@ -149,24 +150,9 @@ export default async function ResultsPage({ params }: { params: Promise<{ key: s
                 {cluster.archetype.description}
               </p>
 
-              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6, minWidth: 0 }}>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6, minWidth: 0, fontSize: 14 }}>
               {cluster.members.slice(0, 3).map((p) => (
-                <li key={p.id} style={{ fontSize: 14, display: "flex", gap: 8, alignItems: "baseline", minWidth: 0 }}>
-                  <span style={{ fontWeight: 550, whiteSpace: "nowrap", flexShrink: 0 }}>{p.name}</span>
-                  <span
-                    style={{
-                      color: "var(--ink-soft)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                  >
-                    {p.currentTitle}
-                    {p.currentCompany ? ` · ${p.currentCompany}` : ""}
-                  </span>
-                </li>
+                <ExamplePerson key={p.id} person={p} canonicalKey={search.canonical_key} />
               ))}
               </ul>
             </div>

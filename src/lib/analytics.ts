@@ -26,6 +26,7 @@ export type PathwaysEvent =
   | "search_submitted"
   | "results_rendered"
   | "cluster_opened"
+  | "person_path_expanded"
   | "person_linkedin_clicked"
   | "cluster_feedback"
   | "exit_survey_clicked"

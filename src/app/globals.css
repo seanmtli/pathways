@@ -142,25 +142,43 @@ button {
   .cluster-body { grid-template-columns: 1fr; gap: 12px; }
 }
 
-/* Explore Path roster: full table on desktop, stacked cells on phones */
+/* Explore Path roster: full table on desktop, stacked cells on phones.
+   Each row is expandable — the data cells live inside a .r-toggle button;
+   the LinkedIn link sits outside it (no nested interactive elements). */
 .roster {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.roster > li,
-.roster-head {
-  display: grid;
-  grid-template-columns: minmax(150px, 1.1fr) minmax(0, 2.1fr) minmax(150px, 1.2fr) minmax(110px, 0.9fr) 52px 34px;
-  gap: 4px 18px;
-  align-items: baseline;
-}
 .roster > li {
-  padding: 12px 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 0 18px;
+  align-items: baseline;
+  padding: 10px 0;
   border-top: 1px solid var(--line);
   font-size: 14.5px;
 }
-.roster .r-name { font-weight: 550; }
+.roster .r-toggle,
+.roster-head {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.1fr) minmax(0, 2.1fr) minmax(150px, 1.2fr) minmax(110px, 0.9fr) 52px;
+  gap: 4px 18px;
+  align-items: baseline;
+}
+.roster .r-toggle {
+  background: none;
+  border: none;
+  padding: 2px 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  min-width: 0;
+  border-radius: 6px;
+}
+.roster .r-toggle:hover .r-name { color: var(--brand); }
+.roster .r-name { font-weight: 550; display: flex; gap: 6px; align-items: baseline; }
 .roster .r-role, .roster .r-edu, .roster .r-loc { color: var(--ink-soft); }
 .roster .r-yoe { color: var(--ink-soft); text-align: right; }
 .roster .r-role, .roster .r-edu, .roster .r-name, .roster .r-loc {
@@ -168,7 +186,10 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.roster .r-timeline { grid-column: 1 / -1; }
 .roster-head {
+  /* mirror the row layout: data columns + the 34px link gutter */
+  grid-template-columns: minmax(150px, 1.1fr) minmax(0, 2.1fr) minmax(150px, 1.2fr) minmax(110px, 0.9fr) 52px 34px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -178,7 +199,10 @@ button {
 }
 
 @media (max-width: 899px) {
-  .roster > li, .roster-head {
+  .roster .r-toggle {
+    grid-template-columns: minmax(140px, 1.1fr) minmax(0, 2fr) minmax(150px, 1.2fr) 52px;
+  }
+  .roster-head {
     grid-template-columns: minmax(140px, 1.1fr) minmax(0, 2fr) minmax(150px, 1.2fr) 52px 34px;
   }
   .roster .r-loc { display: none; }
@@ -186,20 +210,60 @@ button {
 
 @media (max-width: 639px) {
   .roster-head { display: none; }
-  .roster > li {
-    grid-template-columns: 1fr 34px;
-    grid-template-areas:
-      "name link"
-      "role role"
-      "meta meta";
-    padding: 14px 0;
-  }
-  .roster .r-name { grid-area: name; white-space: normal; }
-  .roster .r-role { grid-area: role; white-space: normal; }
-  .roster .r-link { grid-area: link; justify-self: end; }
-  .roster .r-edu { grid-area: meta; }
+  .roster > li { grid-template-columns: 1fr; padding: 12px 0; }
+  /* Stack the cells: a block button would run role and education together */
+  .roster .r-toggle { display: grid; grid-template-columns: 1fr; gap: 2px; padding-right: 38px; }
+  .roster .r-name, .roster .r-role, .roster .r-edu { white-space: normal; }
+  .roster .r-edu { font-size: 13px; }
+  .roster .r-link { position: absolute; top: 12px; right: 0; }
   .roster .r-yoe { display: none; }
   .roster .r-edu[data-yoe]:not([data-yoe=""])::after {
     content: " · " attr(data-yoe);
   }
 }
+
+/* Expandable example people on results cards */
+.xp { list-style: none; }
+.xp-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  width: 100%;
+  min-width: 0;
+}
+.xp-row:hover .xp-name { color: var(--brand); }
+.xp-name { font-weight: 550; white-space: nowrap; flex-shrink: 0; }
+.xp-role {
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.xp-chevron { font-size: 10px; color: var(--ink-soft); flex-shrink: 0; width: 10px; }
+
+/* Career timeline (shared) */
+.timeline {
+  margin: 8px 0 10px 16px;
+  padding: 10px 13px;
+  font-size: 13.5px;
+  background: var(--brand-tint);
+  border-radius: 10px;
+}
+.timeline ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.timeline li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.t-years { color: var(--ink-soft); font-size: 11.5px; white-space: nowrap; }
+.t-role strong { font-weight: 550; }
+.t-co { color: var(--ink-soft); }
+.t-now .t-role strong { color: var(--brand-strong); }
+.t-edu { color: var(--ink-soft); margin-bottom: 8px; font-size: 13px; }
+.t-earlier { color: var(--ink-soft); font-size: 12px; margin-bottom: 6px; font-style: italic; }
+/* Roster timelines have the full table width to work with */
+.roster .r-timeline .timeline { margin-left: 24px; max-width: 62ch; }
