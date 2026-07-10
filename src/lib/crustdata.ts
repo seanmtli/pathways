@@ -143,6 +143,7 @@ interface IdentifyMatch {
   company_data?: {
     crustdata_company_id?: number;
     basic_info?: {
+      crustdata_company_id?: number;
       name?: string | null;
       primary_domain?: string | null;
       professional_network_url?: string | null;
