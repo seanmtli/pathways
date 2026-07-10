@@ -159,6 +159,49 @@ test("cleaning requires title and company on the same current entry", () => {
   assert.equal(result.profiles[0].currentCompany, "Bain & Company");
 });
 
+test("scoped cleaning matches employer by name when company id is missing", () => {
+  const scope: ResolvedCompanyScope = {
+    kind: "named",
+    scopeKey: "named:test",
+    label: "Sequoia Capital",
+    verified: true,
+    companies: [{
+      crustdataCompanyId: 99,
+      canonicalName: "Sequoia Capital",
+      domain: "sequoiacap.com",
+      linkedinUrl: null,
+      confidence: 1,
+    }],
+  };
+  const profile: RawProfile = {
+    crustdata_person_id: 3,
+    basic_profile: { name: "No Id Match", current_title: "Partner" },
+    experience: {
+      employment_details: {
+        current: [{
+          title: "Partner",
+          name: "Sequoia Capital",
+          start_date: "2024-01-01",
+          end_date: null,
+          company_professional_network_industry: null,
+          seniority_level: null,
+        }],
+        past: [{
+          title: "Associate",
+          name: "Prior Fund",
+          start_date: "2020-01-01",
+          end_date: "2023-12-31",
+          company_professional_network_industry: null,
+          seniority_level: null,
+        }],
+      },
+    },
+  };
+  const result = cleanProfiles([profile], { companyScope: scope, titleVariants: ["Partner"] });
+  assert.equal(result.profiles.length, 1);
+  assert.equal(result.profiles[0].currentCompany, "Sequoia Capital");
+});
+
 test("small-sample clustering boundaries are deterministic", () => {
   assert.deepEqual(clusteringOptionsForSample(12, 12), { minRelevant: 12, minArchetypes: 2, maxArchetypes: 2 });
   assert.deepEqual(clusteringOptionsForSample(23, 12), { minRelevant: 12, minArchetypes: 2, maxArchetypes: 2 });

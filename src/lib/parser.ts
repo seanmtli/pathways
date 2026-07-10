@@ -5,6 +5,7 @@ import {
   fuzzyOr,
   identifyCompanies,
   identifyCompaniesByDomain,
+  identifyCompaniesByProfileUrl,
   type CrustdataFilter,
   type ResolvedCompany,
 } from "./crustdata.ts";
@@ -71,7 +72,8 @@ export interface ParseResult {
 }
 
 const nullableEnum = (values: readonly string[]) => ({
-  anyOf: [{ type: "string", enum: values }, { type: "null" }],
+  type: ["string", "null"] as const,
+  enum: [...values, null],
 });
 
 const PARSE_SCHEMA = {
@@ -190,6 +192,34 @@ export function canonicalKeyOf(role: CanonicalRole, scope: ResolvedCompanyScope 
   return scope ? `${base}|scope:${scope.scopeKey}` : base;
 }
 
+function nameVariants(canonicalName: string, aliases: readonly string[] = []): string[] {
+  const variants = new Set([canonicalName, ...aliases]);
+  const withoutParens = canonicalName.replace(/\s*\([^)]+\)\s*$/, "").trim();
+  if (withoutParens) variants.add(withoutParens);
+  return [...variants];
+}
+
+async function resolveEntry(entry: {
+  canonicalName: string;
+  seed: ReturnType<typeof companyByAlias>;
+}): Promise<ResolvedCompany | undefined> {
+  const { canonicalName, seed } = entry;
+  if (seed?.domain) {
+    const domainHit = (await identifyCompaniesByDomain([seed.domain])).get(seed.domain);
+    if (domainHit) return domainHit;
+  }
+  const names = nameVariants(canonicalName, seed?.aliases ?? []);
+  const nameHits = await identifyCompanies(names);
+  for (const name of names) {
+    const hit = nameHits.get(name);
+    if (hit) return hit;
+  }
+  if (seed?.linkedinUrl) {
+    return (await identifyCompaniesByProfileUrl([seed.linkedinUrl])).get(seed.linkedinUrl);
+  }
+  return undefined;
+}
+
 async function resolveNames(names: readonly string[]): Promise<ResolvedCompany[]> {
   const entries = [...new Map(
     names
@@ -200,17 +230,20 @@ async function resolveNames(names: readonly string[]): Promise<ResolvedCompany[]
       })
       .filter((entry): entry is readonly [string, { canonicalName: string; seed: ReturnType<typeof companyByAlias> }] => entry !== null),
   ).values()];
-  const domains = entries.map((entry) => entry.seed?.domain).filter((domain): domain is string => Boolean(domain));
-  const unknownNames = entries.filter((entry) => !entry.seed?.domain).map((entry) => entry.canonicalName);
-  const [domainMatches, nameMatches] = await Promise.all([
-    identifyCompaniesByDomain(domains),
-    identifyCompanies(unknownNames),
-  ]);
-  return entries
-    .map((entry) => entry.seed?.domain
-      ? domainMatches.get(entry.seed.domain)
-      : nameMatches.get(entry.canonicalName))
-    .filter((match): match is ResolvedCompany => match !== undefined);
+  const resolved = await Promise.all(entries.map((entry) => resolveEntry(entry)));
+  return resolved.filter((match): match is ResolvedCompany => match !== undefined);
+}
+
+function companyEmployerFilter(companies: readonly ResolvedCompany[]): CrustdataFilter {
+  const ids = companies.map((item) => item.crustdataCompanyId);
+  const names = [...new Set(companies.map((item) => item.canonicalName))];
+  return {
+    op: "or",
+    conditions: [
+      { field: "experience.employment_details.current.company_id", type: "in", value: ids },
+      { field: "experience.employment_details.current.company_name", type: "in", value: names },
+    ],
+  };
 }
 
 export async function resolveCompanyScope(raw: Pick<
@@ -336,10 +369,13 @@ export async function parseQuery(rawQuery: string): Promise<ParseResult> {
   let companyScope: ResolvedCompanyScope | null;
   try {
     companyScope = await resolveCompanyScope(raw);
-  } catch {
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`resolveCompanyScope failed for "${rawQuery.slice(0, 120)}": ${detail}`);
     return invalid([`Try ${titleCase(canonicalRole.title_family)} at a broader employer group`, titleCase(canonicalRole.title_family)]);
   }
   if (companyScope && !config.companyScopedSearchEnabled()) {
+    console.warn("COMPANY_SCOPED_SEARCH_ENABLED is false — blocking employer-scoped search");
     return invalid([titleCase(canonicalRole.title_family)]);
   }
 
@@ -348,11 +384,7 @@ export async function parseQuery(rawQuery: string): Promise<ParseResult> {
   ];
 
   if (companyScope?.kind === "named" || companyScope?.kind === "set" || companyScope?.kind === "inferred") {
-    baseConditions.push({
-      field: "experience.employment_details.current.company_id",
-      type: "in",
-      value: companyScope.companies.map((item) => item.crustdataCompanyId),
-    });
+    baseConditions.push(companyEmployerFilter(companyScope.companies));
   } else if (companyScope?.kind === "structural") {
     const preset = employerPresetByKey(companyScope.presetKey)!;
     baseConditions.push(...preset.conditions);

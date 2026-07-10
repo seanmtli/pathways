@@ -222,6 +222,12 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
         companyScope: parsed.companyScope,
         titleVariants: parsed.titleVariants,
       });
+      if (parsed.companyScope) {
+        console.info(
+          `scoped clean: ${cleaned.stats.input} in → ${cleaned.stats.kept} kept ` +
+            `(scope_mismatch=${cleaned.stats.droppedScopeMismatch})`,
+        );
+      }
       profiles = cleaned.profiles;
       // Persist the cleaned pull BEFORE clustering (§6.4/§6.7): if clustering
       // fails downstream we retry from this row, never from a fresh paid pull.
