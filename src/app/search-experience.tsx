@@ -12,7 +12,7 @@ type Chip = { canonical_key: string; role_description: string };
 type DoneEvent =
   | { kind: "ok"; canonicalKey: string; cacheHit: boolean; latencyMs: number }
   | { kind: "invalid_query"; suggestions: string[] }
-  | { kind: "thin_data"; suggestions: string[]; usableProfiles: number }
+  | { kind: "thin_data"; suggestions: string[]; usableProfiles: number; companyScopeLabel: string | null }
   | { kind: "rate_limited"; scope: string; availableRoles: Chip[] }
   | { kind: "degraded"; reason: string; availableRoles: Chip[] }
   | { kind: "error"; availableRoles: Chip[] };
@@ -277,7 +277,12 @@ function OutcomeNotice({
       body: "Your search didn't cost you anything, and it wasn't your fault. Try again in a minute, or explore a mapped role:",
     },
   };
-  const { title, body } = copy[outcome.kind];
+  const selected = copy[outcome.kind];
+  const title = selected.title;
+  const body =
+    outcome.kind === "thin_data" && outcome.companyScopeLabel
+      ? `We found only ${outcome.usableProfiles} usable profiles currently at ${outcome.companyScopeLabel}. We did not silently broaden your employer scope. Try:`
+      : selected.body;
 
   const suggestions =
     outcome.kind === "invalid_query" || outcome.kind === "thin_data" ? outcome.suggestions : [];

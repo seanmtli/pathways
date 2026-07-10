@@ -23,6 +23,8 @@ function slimOutcome(o: PipelineOutcome): object {
       latencyMs: o.latencyMs,
       sampleSize: o.sampleSize,
       clusterCount: o.clusters.length,
+      sampleQuality: o.sampleQuality,
+      companyScopeLabel: o.companyScope?.label ?? null,
     };
   }
   return o;

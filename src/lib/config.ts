@@ -13,6 +13,10 @@ function intEnv(name: string, fallback: string): number {
   return n;
 }
 
+function boolEnv(name: string, fallback: string): boolean {
+  return /^(1|true|yes|on)$/i.test(env(name, fallback));
+}
+
 export const config = {
   crustdataApiKey: () => env("CRUSTDATA_API_KEY"),
 
@@ -45,4 +49,6 @@ export const config = {
   // without this, vendor samples skew heavily international and produce
   // artifact clusters. Empty string disables.
   pullCountry: () => env("PULL_COUNTRY_FILTER", "United States"),
+  companyScopedSearchEnabled: () => boolEnv("COMPANY_SCOPED_SEARCH_ENABLED", "true"),
+  inferredCompanySetsEnabled: () => boolEnv("INFERRED_COMPANY_SETS_ENABLED", "true"),
 };

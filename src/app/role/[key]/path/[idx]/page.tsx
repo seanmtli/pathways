@@ -38,6 +38,9 @@ export default async function ExplorePathPage({
   }
 
   const backHref = `/role/${encodeURIComponent(search.canonical_key)}`;
+  const scope = search.company_scope;
+  const scopedCompanies = scope && "companies" in scope ? scope.companies : [];
+  const pullCountry = search.pull_country;
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 24px 64px" }}>
@@ -60,6 +63,21 @@ export default async function ExplorePathPage({
         <p className="mono" style={{ marginTop: 10, fontSize: 14, color: "var(--brand)", fontWeight: 600 }}>
           {cluster.percentage}% of the {search.sample_size} professionals we analyzed · {cluster.members.length} people
         </p>
+        {scope && (
+          <p style={{ marginTop: 10, fontSize: 13.5, color: "var(--ink-soft)" }}>
+            Current-employer scope:{" "}
+            {scopedCompanies.length > 0
+              ? scopedCompanies.map((company) => company.canonicalName).join(", ")
+              : scope.label}
+            {search.sample_quality === "small" ? " · Small sample; percentages are directional." : ""}
+            {pullCountry ? ` · Current location: ${pullCountry}.` : ""}
+          </p>
+        )}
+        {!scope && search.sample_quality === "small" && (
+          <p style={{ marginTop: 10, fontSize: 13.5, color: "var(--ink-soft)" }}>
+            Small sample; percentages are directional.
+          </p>
+        )}
       </header>
 
       <div className="roster-head" aria-hidden>

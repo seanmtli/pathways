@@ -59,6 +59,9 @@ export default async function ResultsPage({ params }: { params: Promise<{ key: s
     year: "numeric",
   });
   const maxPct = Math.max(...search.clusters.map((c) => c.percentage), 1);
+  const scope = search.company_scope;
+  const scopedCompanies = scope && "companies" in scope ? scope.companies : [];
+  const pullCountry = search.pull_country;
 
   return (
     <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 24px 64px" }}>
@@ -66,12 +69,15 @@ export default async function ResultsPage({ params }: { params: Promise<{ key: s
         canonicalKey={search.canonical_key}
         sampleSize={search.sample_size}
         clusterCount={search.clusters.length}
+        scopeKind={scope?.kind ?? null}
+        scopeKey={search.company_scope_key}
+        sampleQuality={search.sample_quality}
       />
       <TopBar />
 
       <header style={{ margin: "36px 0 8px" }}>
         <h1 style={{ fontSize: "clamp(1.5rem, 4.5vw, 2.1rem)", fontWeight: 600, letterSpacing: "-0.015em" }}>
-          {search.role_description}
+          Career paths to {search.role_description}
         </h1>
         <p style={{ marginTop: 10, fontSize: 15, color: "var(--ink-soft)" }}>
           Based on{" "}
@@ -82,6 +88,55 @@ export default async function ResultsPage({ params }: { params: Promise<{ key: s
           shows is of the people we analyzed, not of everyone who's ever done
           it. Data refreshed {refreshed}.
         </p>
+        {scope && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 14px",
+              borderRadius: 10,
+              background: "var(--brand-tint)",
+              color: "var(--ink-soft)",
+              fontSize: 14,
+            }}
+          >
+            {scopedCompanies.length > 0 ? (
+              <p>
+                Searched current employees at{" "}
+                <strong style={{ color: "var(--ink)" }}>
+                  {scopedCompanies.map((company) => company.canonicalName).join(", ")}
+                </strong>
+                {scope.kind === "set" ? ` · cohort dated ${scope.asOf}` : ""}.
+              </p>
+            ) : (
+              <p>{scope.kind === "structural" ? scope.description : scope.label}</p>
+            )}
+            {scope.kind === "inferred" && (
+              <p style={{ marginTop: 6 }}>
+                This company group was suggested by AI and each employer was verified against Crustdata.
+              </p>
+            )}
+            {search.sample_quality === "small" && (
+              <p style={{ marginTop: 6 }}>
+                Small sample: treat path percentages as directional rather than population estimates.
+              </p>
+            )}
+            {pullCountry && <p style={{ marginTop: 6 }}>Sample limited to people currently located in {pullCountry}.</p>}
+          </div>
+        )}
+        {!scope && search.sample_quality === "small" && (
+          <p
+            style={{
+              marginTop: 14,
+              padding: "12px 14px",
+              borderRadius: 10,
+              background: "var(--brand-tint)",
+              color: "var(--ink-soft)",
+              fontSize: 14,
+            }}
+          >
+            Small sample: treat path percentages as directional rather than population estimates.
+          </p>
+        )}
       </header>
 
       <ol style={{ listStyle: "none", margin: "28px 0 0", padding: 0 }}>

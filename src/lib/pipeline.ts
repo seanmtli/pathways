@@ -10,10 +10,21 @@
 // daily credit ceiling, which degrades to cached-only mode — never a hard
 // error, never silent overspend.
 
-import { parseQuery, canonicalKeyOf, type ParseResult } from "./parser.ts";
+import {
+  parseQuery,
+  canonicalKeyOf,
+  companyScopeKey,
+  type ParseResult,
+  type ResolvedCompanyScope,
+} from "./parser.ts";
 import { searchPeople } from "./crustdata.ts";
 import { cleanProfiles, type CleanProfile } from "./cleaning.ts";
-import { clusterProfiles, type Cluster, type ClusteringResult } from "./clustering.ts";
+import {
+  clusterProfiles,
+  clusteringOptionsForSample,
+  type Cluster,
+  type ClusteringResult,
+} from "./clustering.ts";
 import { config } from "./config.ts";
 import * as db from "./db.ts";
 
@@ -29,7 +40,13 @@ export type PipelineOutcome =
   | { kind: "rate_limited"; scope: "session" | "ip"; availableRoles: CachedRoleChip[] }
   | { kind: "degraded"; reason: "spend_ceiling" | "vendor_down"; availableRoles: CachedRoleChip[] }
   | { kind: "error"; availableRoles: CachedRoleChip[] }
-  | { kind: "thin_data"; suggestions: string[]; usableProfiles: number; canonicalKey: string }
+  | {
+      kind: "thin_data";
+      suggestions: string[];
+      usableProfiles: number;
+      canonicalKey: string;
+      companyScopeLabel: string | null;
+    }
   | {
       kind: "ok";
       canonicalKey: string;
@@ -39,6 +56,8 @@ export type PipelineOutcome =
       sampleSize: number;
       cacheHit: boolean;
       latencyMs: number;
+      companyScope: ResolvedCompanyScope | null;
+      sampleQuality: "standard" | "small";
     };
 
 export interface PipelineContext {
@@ -104,13 +123,18 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
       await finish({ outcome: "invalid_query" });
       return { kind: "invalid_query", suggestions: parsed.suggestions };
     }
-    const key = canonicalKeyOf(parsed.canonicalRole);
+    const scopeKey = companyScopeKey(parsed.companyScope);
+    const key = canonicalKeyOf(parsed.canonicalRole, parsed.companyScope);
 
     // 2. Cache check: exact canonical key, then the fuzzy secondary layer (§6.3)
     stage("cache_check", key);
     const cached =
       (await db.getFreshSearch(key)) ??
-      (await db.fuzzyFindSearch(parsed.canonicalRole.title_family, parsed.canonicalRole.industry_context));
+      (await db.fuzzyFindSearch(
+        parsed.canonicalRole.title_family,
+        parsed.canonicalRole.industry_context,
+        scopeKey,
+      ));
     if (cached) {
       await finish({ canonical_key: cached.canonical_key, cache_hit: true, outcome: "ok" });
       return {
@@ -122,6 +146,8 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
         sampleSize: cached.sample_size,
         cacheHit: true,
         latencyMs: elapsed(),
+        companyScope: cached.company_scope,
+        sampleQuality: cached.sample_quality,
       };
     }
 
@@ -192,7 +218,10 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
       await db.addSpend(pull.estimatedCredits);
 
       stage("cleaning");
-      const cleaned = cleanProfiles(pull.profiles);
+      const cleaned = cleanProfiles(pull.profiles, {
+        companyScope: parsed.companyScope,
+        titleVariants: parsed.titleVariants,
+      });
       profiles = cleaned.profiles;
       // Persist the cleaned pull BEFORE clustering (§6.4/§6.7): if clustering
       // fails downstream we retry from this row, never from a fresh paid pull.
@@ -209,23 +238,45 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
     }
 
     // 4. Thin-data gate (§5.6)
-    if (profiles.length < config.minUsableProfiles()) {
+    const minimumProfiles = 12;
+    if (profiles.length < minimumProfiles) {
       await finish({ canonical_key: key, outcome: "thin_data" });
-      return { kind: "thin_data", suggestions: parsed.suggestions, usableProfiles: profiles.length, canonicalKey: key };
+      return {
+        kind: "thin_data",
+        suggestions: parsed.suggestions,
+        usableProfiles: profiles.length,
+        canonicalKey: key,
+        companyScopeLabel: parsed.companyScope?.label ?? null,
+      };
     }
 
     // 5. Two-pass clustering + validation (LLM 2a/2b, §6.5)
     stage("clustering", `${profiles.length} profiles`);
     const result = await retryOnce("cluster", key, () =>
-      clusterProfiles(parsed.roleDescription, profiles, (m) => stage("clustering", m)),
+      clusterProfiles(
+        parsed.roleDescription,
+        profiles,
+        (m) => stage("clustering", m),
+        clusteringOptionsForSample(profiles.length, minimumProfiles),
+      ),
     );
 
     // Thin-data gate again AFTER relevance filtering (§8: a clear "not enough
     // data" state always beats a low-confidence forced output). A pull can be
     // large but mostly vendor false positives — never cache that as a result.
-    if (result.stats.relevant < config.minUsableProfiles()) {
+    const finalClusteringOptions = clusteringOptionsForSample(result.stats.relevant, minimumProfiles);
+    const invalidFinalBucket =
+      result.clusters.length < (finalClusteringOptions.minArchetypes ?? 2) ||
+      result.clusters.length > (finalClusteringOptions.maxArchetypes ?? 6);
+    if (result.stats.relevant < minimumProfiles || result.clusters.length < 2 || invalidFinalBucket) {
       await finish({ canonical_key: key, outcome: "thin_data" });
-      return { kind: "thin_data", suggestions: parsed.suggestions, usableProfiles: result.stats.relevant, canonicalKey: key };
+      return {
+        kind: "thin_data",
+        suggestions: parsed.suggestions,
+        usableProfiles: result.stats.relevant,
+        canonicalKey: key,
+        companyScopeLabel: parsed.companyScope?.label ?? null,
+      };
     }
 
     // 6. Cache write
@@ -241,6 +292,11 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
         clusters: result.clusters,
         stats: result.stats,
         sample_size: result.stats.relevant,
+        target_kind: "current_role",
+        company_scope_key: scopeKey,
+        company_scope: parsed.companyScope,
+        sample_quality: result.stats.relevant < 30 ? "small" : "standard",
+        pull_country: config.pullCountry() || null,
       }),
     );
 
@@ -254,6 +310,8 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
       sampleSize: result.stats.relevant,
       cacheHit: false,
       latencyMs: elapsed(),
+      companyScope: parsed.companyScope,
+      sampleQuality: result.stats.relevant < 30 ? "small" : "standard",
     };
   } catch (err) {
     // Total pipeline failure (§6.7): honest error state; any paid pull was

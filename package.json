@@ -10,7 +10,8 @@
     "role": "node --env-file=.env src/scripts/run-role.ts",
     "test:limits": "node --env-file=.env src/scripts/test-limits.ts",
     "seed": "node --env-file=.env src/scripts/seed.ts",
-    "rank": "node --env-file=.env src/scripts/rank-exemplars.ts"
+    "rank": "node --env-file=.env src/scripts/rank-exemplars.ts",
+    "test": "node --test src/lib/*.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",
