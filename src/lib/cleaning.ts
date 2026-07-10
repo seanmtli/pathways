@@ -85,7 +85,20 @@ function normalizeMatch(value: string): string {
 }
 
 function employmentCompanyId(entry: RawEmployment): number | null {
-  return entry.crustdata_company_id ?? entry.company_id ?? null;
+  const raw = entry.crustdata_company_id ?? entry.company_id;
+  if (raw === null || raw === undefined) return null;
+  const id = typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
+  return Number.isFinite(id) ? id : null;
+}
+
+function companyNameMatches(entry: RawEmployment, canonicalName: string, domain: string | null): boolean {
+  if (!entry.name) return false;
+  const normalized = normalizeMatch(entry.name);
+  const candidates = [canonicalName, domain].filter((value): value is string => Boolean(value));
+  return candidates.some((candidate) => {
+    const needle = normalizeMatch(candidate);
+    return normalized === needle || normalized.includes(needle) || needle.includes(normalized);
+  });
 }
 
 function matchesTitle(entry: RawEmployment, variants: readonly string[]): boolean {
@@ -140,13 +153,14 @@ function resolveScopedCurrent(
       ),
     );
   }
-  const allowed = new Set(scope.companies.map((item) => item.crustdataCompanyId));
-  const matching = current.filter(
-    (entry) => {
-      const id = employmentCompanyId(entry);
-      return id !== null && allowed.has(id) && matchesTitle(entry, titleVariants);
-    },
-  );
+  const allowedIds = new Set(scope.companies.map((item) => item.crustdataCompanyId));
+  const matching = current.filter((entry) => {
+    const id = employmentCompanyId(entry);
+    const employerMatch =
+      (id !== null && allowedIds.has(id)) ||
+      scope.companies.some((company) => companyNameMatches(entry, company.canonicalName, company.domain));
+    return employerMatch && matchesTitle(entry, titleVariants);
+  });
   return resolvePrimaryCurrent(matching);
 }
 

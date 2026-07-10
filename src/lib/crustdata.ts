@@ -157,64 +157,108 @@ interface IdentifyResult {
 
 const identifyCache = new Map<string, ResolvedCompany | null>();
 
+type IdentifyKind = "names" | "domains" | "professional_network_profile_urls";
+
+function identifyCacheKey(kind: IdentifyKind, value: string): string {
+  return `${kind}:${value.toLowerCase()}`;
+}
+
+function parseCompanyId(data: IdentifyMatch["company_data"]): number | null {
+  const raw = data?.crustdata_company_id ?? data?.basic_info?.crustdata_company_id;
+  if (raw === null || raw === undefined) return null;
+  const id = typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
+  return Number.isFinite(id) ? id : null;
+}
+
+function acceptIdentifyMatch(
+  kind: IdentifyKind,
+  ranked: IdentifyMatch[],
+): { id: number; data: NonNullable<IdentifyMatch["company_data"]> } | null {
+  const top = ranked[0];
+  const confidence = top?.confidence_score ?? 0;
+  const margin = confidence - (ranked[1]?.confidence_score ?? 0);
+  const data = top?.company_data;
+  const id = parseCompanyId(data);
+  const minConfidence = kind === "professional_network_profile_urls" ? 0.85 : kind === "domains" ? 0.7 : 0.8;
+  const minMargin = kind === "professional_network_profile_urls" ? 0.1 : kind === "domains" ? 0.03 : 0.05;
+  if (!id || !data || confidence < minConfidence || (ranked.length > 1 && margin < minMargin)) return null;
+  return { id, data };
+}
+
+async function requestIdentify(
+  kind: IdentifyKind,
+  values: readonly string[],
+  exactMatch: boolean,
+  markUnresolved: boolean,
+): Promise<void> {
+  if (values.length === 0) return;
+  const res = await fetch(COMPANY_IDENTIFY_URL, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${config.crustdataApiKey()}`,
+      "content-type": "application/json",
+      "x-api-version": API_VERSION,
+    },
+    body: JSON.stringify({
+      [kind]: values,
+      fields: ["basic_info"],
+      ...(kind === "domains" ? { exact_match: exactMatch } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Crustdata company identify ${res.status}: ${text.slice(0, 500)}`);
+  }
+
+  const results = (await res.json()) as IdentifyResult[];
+  for (let i = 0; i < values.length; i++) {
+    const requested = values[i];
+    const key = identifyCacheKey(kind, requested);
+    const result =
+      results.find((entry) => entry.matched_on?.toLowerCase() === requested.toLowerCase()) ??
+      results[i];
+    const ranked = [...(result?.matches ?? [])].sort(
+      (a, b) => (b.confidence_score ?? 0) - (a.confidence_score ?? 0),
+    );
+    const accepted = acceptIdentifyMatch(kind, ranked);
+    if (accepted) {
+      identifyCache.set(key, {
+        crustdataCompanyId: accepted.id,
+        canonicalName: accepted.data.basic_info?.name?.trim() || requested,
+        domain: accepted.data.basic_info?.primary_domain ?? (kind === "domains" ? requested : null),
+        linkedinUrl: accepted.data.basic_info?.professional_network_url ?? (kind === "professional_network_profile_urls" ? requested : null),
+        confidence: ranked[0]?.confidence_score ?? 0,
+      });
+    } else if (markUnresolved) {
+      identifyCache.set(key, null);
+    }
+  }
+}
+
 async function identify(
-  identifier: "names" | "domains",
+  kind: IdentifyKind,
   values: readonly string[],
 ): Promise<Map<string, ResolvedCompany>> {
   const unique = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-  const cacheKey = (value: string) => `${identifier}:${value.toLowerCase()}`;
-  const missing = unique.filter((value) => !identifyCache.has(cacheKey(value)));
+  const missing = unique.filter((value) => !identifyCache.has(identifyCacheKey(kind, value)));
 
   if (missing.length > 0) {
-    const res = await fetch(COMPANY_IDENTIFY_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${config.crustdataApiKey()}`,
-        "content-type": "application/json",
-        "x-api-version": API_VERSION,
-      },
-      body: JSON.stringify({
-        [identifier]: missing,
-        fields: ["basic_info"],
-        exact_match: identifier === "domains",
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Crustdata company identify ${res.status}: ${text.slice(0, 500)}`);
-    }
-
-    const results = (await res.json()) as IdentifyResult[];
-    for (let i = 0; i < missing.length; i++) {
-      const requested = missing[i];
-      const result =
-        results.find((entry) => entry.matched_on?.toLowerCase() === requested.toLowerCase()) ??
-        results[i];
-      const ranked = [...(result?.matches ?? [])].sort(
-        (a, b) => (b.confidence_score ?? 0) - (a.confidence_score ?? 0),
-      );
-      const top = ranked[0];
-      const confidence = top?.confidence_score ?? 0;
-      const margin = confidence - (ranked[1]?.confidence_score ?? 0);
-      const data = top?.company_data;
-      const id = data?.crustdata_company_id;
-      if (!id || confidence < 0.9 || (ranked.length > 1 && margin < 0.1)) {
-        identifyCache.set(cacheKey(requested), null);
-        continue;
+    if (kind === "domains") {
+      await requestIdentify("domains", missing, true, false);
+      const fuzzyRetry = missing.filter((value) => !identifyCache.has(identifyCacheKey("domains", value)));
+      if (fuzzyRetry.length > 0) await requestIdentify("domains", fuzzyRetry, false, true);
+      for (const value of missing) {
+        const key = identifyCacheKey("domains", value);
+        if (!identifyCache.has(key)) identifyCache.set(key, null);
       }
-      identifyCache.set(cacheKey(requested), {
-        crustdataCompanyId: id,
-        canonicalName: data?.basic_info?.name?.trim() || requested,
-        domain: data?.basic_info?.primary_domain ?? (identifier === "domains" ? requested : null),
-        linkedinUrl: data?.basic_info?.professional_network_url ?? null,
-        confidence,
-      });
+    } else {
+      await requestIdentify(kind, missing, false, true);
     }
   }
 
   const resolved = new Map<string, ResolvedCompany>();
   for (const value of unique) {
-    const match = identifyCache.get(cacheKey(value));
+    const match = identifyCache.get(identifyCacheKey(kind, value));
     if (match) resolved.set(value, match);
   }
   return resolved;
@@ -230,6 +274,10 @@ export async function identifyCompanies(names: readonly string[]): Promise<Map<s
 
 export async function identifyCompaniesByDomain(domains: readonly string[]): Promise<Map<string, ResolvedCompany>> {
   return identify("domains", domains);
+}
+
+export async function identifyCompaniesByProfileUrl(urls: readonly string[]): Promise<Map<string, ResolvedCompany>> {
+  return identify("professional_network_profile_urls", urls);
 }
 
 /**

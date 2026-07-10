@@ -15,11 +15,17 @@ export interface CompanySet {
   companies: readonly CompanySeed[];
 }
 
-const company = (canonicalName: string, domain?: string, aliases: readonly string[] = []): CompanySeed => ({
+const company = (
+  canonicalName: string,
+  domain?: string,
+  aliases: readonly string[] = [],
+  linkedinUrl?: string,
+): CompanySeed => ({
   key: normalizeCompanyToken(canonicalName).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
   canonicalName,
   aliases,
   domain,
+  linkedinUrl,
 });
 
 export function normalizeCompanyToken(value: string): string {
@@ -103,9 +109,9 @@ const SETS = [
     revision: 1,
     asOf: "2026-07-09",
     companies: [
-      company("McKinsey & Company", "mckinsey.com", ["McKinsey"]),
-      company("Boston Consulting Group (BCG)", "bcg.com", ["Boston Consulting Group", "BCG"]),
-      company("Bain & Company", "bain.com", ["Bain"]),
+      company("McKinsey & Company", "mckinsey.com", ["McKinsey"], "https://www.linkedin.com/company/mckinsey/"),
+      company("Boston Consulting Group (BCG)", "bcg.com", ["Boston Consulting Group", "BCG"], "https://www.linkedin.com/company/boston-consulting-group/"),
+      company("Bain & Company", "bain.com", ["Bain"], "https://www.linkedin.com/company/bain-and-company/"),
     ],
   },
   {
@@ -212,7 +218,7 @@ const SETS = [
       company("Kleiner Perkins", "kleinerperkins.com"),
       company("Lightspeed Venture Partners", "lsvp.com"),
       company("New Enterprise Associates", "nea.com", ["NEA"]),
-      company("Sequoia Capital", "sequoiacap.com", ["Sequoia"]),
+      company("Sequoia Capital", "sequoiacap.com", ["Sequoia"], "https://www.linkedin.com/company/sequoia/"),
       company("Thrive Capital", "thrivecap.com"),
     ],
   },

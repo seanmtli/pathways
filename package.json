@@ -8,6 +8,7 @@
     "start": "next start",
     "phase1": "node --env-file=.env src/scripts/phase1.ts",
     "role": "node --env-file=.env src/scripts/run-role.ts",
+    "diagnose-scope": "node --env-file=.env src/scripts/diagnose-scope.ts",
     "test:limits": "node --env-file=.env src/scripts/test-limits.ts",
     "seed": "node --env-file=.env src/scripts/seed.ts",
     "rank": "node --env-file=.env src/scripts/rank-exemplars.ts",
