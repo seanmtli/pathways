@@ -11,21 +11,34 @@ export function ResultsTracker({
   canonicalKey,
   sampleSize,
   clusterCount,
+  scopeKind,
+  scopeKey,
+  sampleQuality,
 }: {
   canonicalKey: string;
   sampleSize: number;
   clusterCount: number;
+  scopeKind: string | null;
+  scopeKey: string | null;
+  sampleQuality: "standard" | "small";
 }) {
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return;
     fired.current = true;
-    track("results_rendered", { canonical_key: canonicalKey, sample_size: sampleSize, cluster_count: clusterCount });
+    track("results_rendered", {
+      canonical_key: canonicalKey,
+      sample_size: sampleSize,
+      cluster_count: clusterCount,
+      scope_kind: scopeKind,
+      scope_key: scopeKey,
+      sample_quality: sampleQuality,
+    });
     const survey = document.querySelector("[data-survey-link]");
     const onClick = () => track("exit_survey_clicked", { canonical_key: canonicalKey });
     survey?.addEventListener("click", onClick);
     return () => survey?.removeEventListener("click", onClick);
-  }, [canonicalKey, sampleSize, clusterCount]);
+  }, [canonicalKey, sampleSize, clusterCount, scopeKind, scopeKey, sampleQuality]);
   return null;
 }
 

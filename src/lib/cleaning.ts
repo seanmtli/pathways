@@ -1,13 +1,22 @@
 // Cleaning pass (PRD §6.4): resolve the primary current role, drop thin
 // profiles, and reduce each profile to the render-necessary fields.
 
-import type { RawEmployment, RawProfile } from "./crustdata.ts";
+import type { CrustdataFilter, RawEmployment, RawProfile } from "./crustdata.ts";
+import type { ResolvedCompanyScope } from "./parser.ts";
+import { employerPresetByKey } from "./employer-presets.ts";
 
 export interface RoleEntry {
   title: string;
   company: string;
   start: string | null; // "YYYY-MM"
   end: string | null; // null = present
+  companyId?: number | null;
+}
+
+export interface MatchedCurrentRole {
+  title: string;
+  company: string;
+  companyId: number | null;
 }
 
 export interface CleanProfile {
@@ -20,6 +29,7 @@ export interface CleanProfile {
   yearsExperience: number | null;
   education: { school: string; degree: string | null }[];
   history: RoleEntry[]; // chronological, includes current role last
+  matchedCurrentRole: MatchedCurrentRole;
 }
 
 // PRD §6.4: advisory/board/volunteer patterns to skip when resolving the
@@ -47,7 +57,13 @@ export function resolvePrimaryCurrent(current: RawEmployment[]): RawEmployment |
 
 function toRoleEntry(e: RawEmployment): RoleEntry | null {
   if (!e.title || !e.name) return null;
-  return { title: e.title, company: e.name, start: ym(e.start_date), end: ym(e.end_date) };
+  return {
+    title: e.title,
+    company: e.name,
+    start: ym(e.start_date),
+    end: ym(e.end_date),
+    companyId: e.crustdata_company_id ?? e.company_id ?? null,
+  };
 }
 
 export interface CleaningStats {
@@ -56,10 +72,93 @@ export interface CleaningStats {
   droppedNoHistory: number;
   droppedThinHistory: number;
   droppedNoIdentity: number;
+  droppedScopeMismatch: number;
 }
 
-export function cleanProfiles(raw: RawProfile[]): { profiles: CleanProfile[]; stats: CleaningStats } {
-  const stats: CleaningStats = { input: raw.length, kept: 0, droppedNoHistory: 0, droppedThinHistory: 0, droppedNoIdentity: 0 };
+export interface CleaningOptions {
+  companyScope?: ResolvedCompanyScope | null;
+  titleVariants?: readonly string[];
+}
+
+function normalizeMatch(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function employmentCompanyId(entry: RawEmployment): number | null {
+  return entry.crustdata_company_id ?? entry.company_id ?? null;
+}
+
+function matchesTitle(entry: RawEmployment, variants: readonly string[]): boolean {
+  if (!entry.title || variants.length === 0) return Boolean(entry.title);
+  const title = normalizeMatch(entry.title);
+  return variants.some((variant) => title.includes(normalizeMatch(variant)));
+}
+
+function structuralField(entry: RawEmployment, field: string): string | null {
+  if (field.endsWith(".company_professional_network_industry")) {
+    return entry.company_professional_network_industry;
+  }
+  if (field.endsWith(".company_headcount_range")) return entry.company_headcount_range ?? null;
+  if (field.endsWith(".company_type")) return entry.company_type ?? null;
+  return null;
+}
+
+function matchesEmploymentFilter(entry: RawEmployment, filter: CrustdataFilter): boolean {
+  if ("conditions" in filter) {
+    return filter.op === "and"
+      ? filter.conditions.every((condition) => matchesEmploymentFilter(entry, condition))
+      : filter.conditions.some((condition) => matchesEmploymentFilter(entry, condition));
+  }
+  const actual = structuralField(entry, filter.field);
+  if (actual === null) return false;
+  if (filter.type === "in" || filter.type === "not_in") {
+    const contains = filter.value.some((value) => normalizeMatch(String(value)) === normalizeMatch(actual));
+    return filter.type === "in" ? contains : !contains;
+  }
+  if (filter.type === "=" || filter.type === "!=") {
+    const equal = normalizeMatch(String(filter.value)) === normalizeMatch(actual);
+    return filter.type === "=" ? equal : !equal;
+  }
+  if (filter.type === "(.)") return normalizeMatch(actual).includes(normalizeMatch(String(filter.value)));
+  return false;
+}
+
+function resolveScopedCurrent(
+  current: RawEmployment[],
+  scope: ResolvedCompanyScope | null | undefined,
+  titleVariants: readonly string[],
+): RawEmployment | null {
+  if (!scope) return resolvePrimaryCurrent(current);
+  if (scope.kind === "structural") {
+    const preset = employerPresetByKey(scope.presetKey);
+    if (!preset) return null;
+    return resolvePrimaryCurrent(
+      current.filter(
+        (entry) =>
+          matchesTitle(entry, titleVariants) &&
+          preset.conditions.every((condition) => matchesEmploymentFilter(entry, condition)),
+      ),
+    );
+  }
+  const allowed = new Set(scope.companies.map((item) => item.crustdataCompanyId));
+  const matching = current.filter(
+    (entry) => {
+      const id = employmentCompanyId(entry);
+      return id !== null && allowed.has(id) && matchesTitle(entry, titleVariants);
+    },
+  );
+  return resolvePrimaryCurrent(matching);
+}
+
+export function cleanProfiles(raw: RawProfile[], options: CleaningOptions = {}): { profiles: CleanProfile[]; stats: CleaningStats } {
+  const stats: CleaningStats = {
+    input: raw.length,
+    kept: 0,
+    droppedNoHistory: 0,
+    droppedThinHistory: 0,
+    droppedNoIdentity: 0,
+    droppedScopeMismatch: 0,
+  };
   const out: CleanProfile[] = [];
   const seenIds = new Set<string>();
 
@@ -76,9 +175,10 @@ export function cleanProfiles(raw: RawProfile[]): { profiles: CleanProfile[]; st
 
     const current = p.experience?.employment_details?.current ?? [];
     const past = p.experience?.employment_details?.past ?? [];
-    const primary = resolvePrimaryCurrent(current);
+    const primary = resolveScopedCurrent(current, options.companyScope, options.titleVariants ?? []);
     if (!primary || !primary.title) {
-      stats.droppedNoHistory++;
+      if (options.companyScope) stats.droppedScopeMismatch++;
+      else stats.droppedNoHistory++;
       continue;
     }
 
@@ -111,6 +211,11 @@ export function cleanProfiles(raw: RawProfile[]): { profiles: CleanProfile[]; st
         .filter((s) => s.school)
         .map((s) => ({ school: s.school as string, degree: s.degree ?? null })),
       history: historyEntries,
+      matchedCurrentRole: {
+        title: primary.title,
+        company: primary.name ?? "",
+        companyId: employmentCompanyId(primary),
+      },
     });
     stats.kept++;
   }

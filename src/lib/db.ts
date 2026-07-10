@@ -6,6 +6,7 @@ import { config } from "./config.ts";
 import type { Cluster, ClusteringResult } from "./clustering.ts";
 import type { CleanProfile } from "./cleaning.ts";
 import type { CrustdataFilter } from "./crustdata.ts";
+import type { ResolvedCompanyScope } from "./parser.ts";
 
 function env(name: string): string {
   const v = process.env[name];
@@ -38,6 +39,23 @@ export interface CachedSearch {
   stats: ClusteringResult["stats"];
   sample_size: number;
   refreshed_at: string;
+  target_kind: "current_role";
+  company_scope_key: string | null;
+  company_scope: ResolvedCompanyScope | null;
+  sample_quality: "standard" | "small";
+  pull_country: string | null;
+}
+
+function normalizeCachedSearch(row: Partial<CachedSearch> | null): CachedSearch | null {
+  if (!row) return null;
+  return {
+    ...row,
+    target_kind: row.target_kind ?? "current_role",
+    company_scope_key: row.company_scope_key ?? null,
+    company_scope: row.company_scope ?? null,
+    sample_quality: row.sample_quality ?? "standard",
+    pull_country: row.pull_country ?? null,
+  } as CachedSearch;
 }
 
 export async function getFreshSearch(canonicalKey: string): Promise<CachedSearch | null> {
@@ -48,7 +66,7 @@ export async function getFreshSearch(canonicalKey: string): Promise<CachedSearch
     .gte("refreshed_at", freshnessCutoff())
     .maybeSingle();
   if (error) throw new Error(`getFreshSearch: ${error.message}`);
-  return data as CachedSearch | null;
+  return normalizeCachedSearch(data as Partial<CachedSearch> | null);
 }
 
 /**
@@ -56,17 +74,26 @@ export async function getFreshSearch(canonicalKey: string): Promise<CachedSearch
  * cached key whose title_family + industry_context match exactly even though
  * seniority differs. Deliberately simple — no embedding lookup in v1.
  */
-export async function fuzzyFindSearch(titleFamily: string, industryContext: string): Promise<CachedSearch | null> {
-  const { data, error } = await supabase
+export async function fuzzyFindSearch(
+  titleFamily: string,
+  industryContext: string,
+  companyScopeKey: string | null,
+): Promise<CachedSearch | null> {
+  let query = supabase
     .from("pw_cached_searches")
     .select("*")
+    .eq("target_kind", "current_role")
     .eq("title_family", titleFamily)
     .eq("industry_context", industryContext)
     .gte("refreshed_at", freshnessCutoff())
+    .order("refreshed_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+  query = companyScopeKey === null
+    ? query.is("company_scope_key", null)
+    : query.eq("company_scope_key", companyScopeKey);
+  const { data, error } = await query.maybeSingle();
   if (error) throw new Error(`fuzzyFindSearch: ${error.message}`);
-  return data as CachedSearch | null;
+  return normalizeCachedSearch(data as Partial<CachedSearch> | null);
 }
 
 export async function upsertSearch(row: Omit<CachedSearch, "refreshed_at">): Promise<void> {

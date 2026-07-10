@@ -80,11 +80,29 @@ const ARCHETYPE_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-export async function deriveArchetypes(roleDescription: string, sample: CleanProfile[]): Promise<Archetype[]> {
-  const system = `You are a career-path analyst. You will be given the career histories of professionals currently in a target role. Your job is to identify the 4-6 distinct, recognizable career paths ("archetypes") people took to reach this role.
+export interface ClusteringOptions {
+  minRelevant?: number;
+  minArchetypes?: number;
+  maxArchetypes?: number;
+}
+
+export function clusteringOptionsForSample(profileCount: number, minRelevant: number): ClusteringOptions {
+  if (profileCount < 24) return { minRelevant, minArchetypes: 2, maxArchetypes: 2 };
+  if (profileCount < 30) return { minRelevant, minArchetypes: 3, maxArchetypes: 3 };
+  return { minRelevant, minArchetypes: 4, maxArchetypes: 6 };
+}
+
+export async function deriveArchetypes(
+  roleDescription: string,
+  sample: CleanProfile[],
+  options: ClusteringOptions = {},
+): Promise<Archetype[]> {
+  const minArchetypes = options.minArchetypes ?? 4;
+  const maxArchetypes = options.maxArchetypes ?? 6;
+  const system = `You are a career-path analyst. You will be given the career histories of professionals currently in a target role. Your job is to identify exactly ${minArchetypes === maxArchetypes ? minArchetypes : `${minArchetypes}-${maxArchetypes}`} distinct, recognizable career paths ("archetypes") people took to reach this role.
 
 Rules:
-- Between 4 and 6 archetypes, collectively covering the common patterns in the data.
+- Return between ${minArchetypes} and ${maxArchetypes} archetypes, collectively covering the common patterns in the data.
 - Each label must be short (2-6 words) and instantly legible to a career explorer, e.g. "Consulting → strategy track".
 - Each description is 1-2 sentences describing the common pattern.
 - "signals" lists 2-4 concrete distinguishing markers (prior industries, typical roles, education) that separate this archetype from the others.
@@ -103,8 +121,10 @@ ${sample.map((p) => careerSummary(p)).join("\n")}`;
     maxTokens: 4000,
   });
 
-  if (archetypes.length < 3 || archetypes.length > 7) {
-    throw new Error(`Archetype derivation returned ${archetypes.length} archetypes (expected 4-6)`);
+  if (archetypes.length < minArchetypes || archetypes.length > maxArchetypes) {
+    throw new Error(
+      `Archetype derivation returned ${archetypes.length} archetypes (expected ${minArchetypes}-${maxArchetypes})`,
+    );
   }
   return archetypes;
 }
@@ -373,11 +393,12 @@ async function clusterRound(
   profiles: CleanProfile[],
   log: (msg: string) => void,
   allowNotRelevant = true,
+  options: ClusteringOptions = {},
 ): Promise<{ archetypes: Archetype[]; assigned: Map<string, string>; batches: number; retries: number }> {
   // Pass 2a
   const sample = representativeSample(profiles, config.archetypeSampleSize());
   log(`Pass 2a: deriving archetypes from ${sample.length} sampled histories…`);
-  const archetypes = await deriveArchetypes(roleDescription, sample);
+  const archetypes = await deriveArchetypes(roleDescription, sample, options);
   log(`Pass 2a: ${archetypes.length} archetypes derived: ${archetypes.map((a) => a.label).join(" | ")}`);
 
   // Pass 2b — independent batches
@@ -424,9 +445,10 @@ export async function clusterProfiles(
   roleDescription: string,
   profiles: CleanProfile[],
   log: (msg: string) => void = () => {},
+  options: ClusteringOptions = {},
 ): Promise<ClusteringResult> {
   // Round 1 over the full cleaned pull.
-  const round1 = await clusterRound(roleDescription, profiles, log);
+  const round1 = await clusterRound(roleDescription, profiles, log, true, options);
 
   const round1Relevant = profiles.filter((p) => {
     const label = round1.assigned.get(p.id);
@@ -443,17 +465,24 @@ export async function clusterProfiles(
   let assigned = round1.assigned;
   let batches = round1.batches;
   let retries = round1.retries;
+  const minRelevant = options.minRelevant ?? config.minUsableProfiles();
+  const relevantOptions = clusteringOptionsForSample(round1Relevant.length, minRelevant);
+  const bucketChanged =
+    relevantOptions.minArchetypes !== (options.minArchetypes ?? 4) ||
+    relevantOptions.maxArchetypes !== (options.maxArchetypes ?? 6);
+  const polluted =
+    round1Classified > 0 &&
+    round1Relevant.length / round1Classified < threshold;
 
   if (
-    round1Classified > 0 &&
-    round1Relevant.length / round1Classified < threshold &&
-    round1Relevant.length >= config.minUsableProfiles()
+    round1Relevant.length >= minRelevant &&
+    (polluted || bucketChanged)
   ) {
     log(
       `Recovery: only ${round1Relevant.length}/${round1Classified} classified as relevant — ` +
         `re-deriving archetypes from the relevant subset`,
     );
-    const round2 = await clusterRound(roleDescription, round1Relevant, log, false);
+    const round2 = await clusterRound(roleDescription, round1Relevant, log, false, relevantOptions);
     archetypes = round2.archetypes;
     batches += round2.batches;
     retries += round2.retries;
@@ -505,6 +534,7 @@ export async function clusterProfiles(
         percentage: relevantTotal > 0 ? Math.round((members.length / relevantTotal) * 100) : 0,
       };
     })
+    .filter((cluster) => cluster.members.length > 0)
     .sort((a, b) => b.members.length - a.members.length);
 
   // Pass 2c — order each cluster's members so the best ambassadors lead.

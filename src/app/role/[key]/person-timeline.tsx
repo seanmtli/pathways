@@ -68,14 +68,15 @@ function useExpand(canonicalKey: string, personId: string) {
 /** Example person on a results-page path card. */
 export function ExamplePerson({ person, canonicalKey }: { person: CleanProfile; canonicalKey: string }) {
   const { open, toggle } = useExpand(canonicalKey, person.id);
+  const current = person.matchedCurrentRole ?? { title: person.currentTitle, company: person.currentCompany };
   return (
     <li className="xp" style={{ minWidth: 0 }}>
       <button type="button" className="xp-row" aria-expanded={open} onClick={toggle}>
         <span aria-hidden className="mono xp-chevron">{open ? "▾" : "▸"}</span>
         <span className="xp-name">{person.name}</span>
         <span className="xp-role">
-          {person.currentTitle}
-          {person.currentCompany ? ` · ${person.currentCompany}` : ""}
+          {current.title}
+          {current.company ? ` · ${current.company}` : ""}
         </span>
       </button>
       {open && <Timeline person={person} />}
@@ -88,6 +89,7 @@ export function RosterRow({ person, canonicalKey }: { person: CleanProfile; cano
   const { open, toggle } = useExpand(canonicalKey, person.id);
   const edu = person.education[0]?.school ?? "—";
   const yoe = person.yearsExperience !== null ? `~${person.yearsExperience}y` : "";
+  const current = person.matchedCurrentRole ?? { title: person.currentTitle, company: person.currentCompany };
   return (
     <li className={open ? "r-open" : undefined}>
       <button type="button" className="r-toggle" aria-expanded={open} onClick={toggle} title="Show career path">
@@ -96,8 +98,8 @@ export function RosterRow({ person, canonicalKey }: { person: CleanProfile; cano
           {person.name}
         </span>
         <span className="r-role">
-          {person.currentTitle}
-          {person.currentCompany ? ` · ${person.currentCompany}` : ""}
+          {current.title}
+          {current.company ? ` · ${current.company}` : ""}
         </span>
         <span className="r-edu" data-yoe={yoe} title={person.education.map((e) => e.school).join("; ")}>
           {edu}
