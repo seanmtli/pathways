@@ -8,8 +8,9 @@ export const EXAMPLE_CHIPS = [
   "Sports agent",
   "Venture capital investor",
   "Chief of staff at a startup",
-  "Venture capital investor at Sequoia",
   "Consultant at MBB",
-  "Software engineer at MANGO",
-  "Investment banker at a boutique investment bank",
 ];
+// ponytail: company-scoped search still works for typed queries (e.g. "VC at
+// Sequoia"). We just don't surface single-company / boutique chips yet — those
+// are the ones Sean flagged. MANGO dropped: a contrived cohort the parser
+// can't reliably resolve.

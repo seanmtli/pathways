@@ -106,7 +106,8 @@ Rules:
 - Each label must be short (2-6 words) and instantly legible to a career explorer, e.g. "Consulting → strategy track".
 - Each description is 1-2 sentences describing the common pattern.
 - "signals" lists 2-4 concrete distinguishing markers (prior industries, typical roles, education) that separate this archetype from the others.
-- Base archetypes only on the evidence in the histories provided. Do not invent paths that aren't represented.`;
+- Base archetypes only on the evidence in the histories provided. Do not invent paths that aren't represented.
+- Ignore internal corporate-support staff whose function does not match the target role (human resources, recruiting / talent acquisition, IT / infrastructure support, office management / facilities, executive assistant / administrative, internal finance, internal marketing / communications). They are data-vendor false positives, not a career path to this role — do not create an archetype for them.`;
 
   const user = `Target role: ${roleDescription}
 
@@ -189,6 +190,7 @@ async function classifyBatch(
   const relevanceRules = allowNotRelevant
     ? `
 - If a person is clearly NOT actually in or closely adjacent to the target role (a false positive from the data vendor — wrong industry, wrong function, or a title match that means something else), assign "${NOT_RELEVANT}" instead. Be strict: relevance means their current role genuinely matches the target role.
+- Internal corporate-support staff whose function does not match the target role are "${NOT_RELEVANT}", even at the right employer. Human resources, recruiting / talent acquisition, IT / help desk / infrastructure support, office management / facilities, executive assistant / administrative, internal finance / accounting, and internal marketing / communications are support functions — NOT the target role — unless the target role IS that function. Example: at a consulting firm, a "Talent Acquisition Manager", "HR Consultant", or "IT Support Manager" is NOT a management/strategy consultant. Judge by what the person actually does, not by a title keyword that happens to overlap.
 - Interns, summer associates/analysts, students, and trainees are "${NOT_RELEVANT}" — they do not yet hold the role.
 - If the target role specifies a startup employer: people at decades-old small businesses, family firms, agencies, franchises, or their own one-person shell company are "${NOT_RELEVANT}" — a startup is a young company, not merely a small one. Use the career history for age signals (e.g. someone employed at the same small company since 2005 is not at a startup).`
     : `
