@@ -6,6 +6,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { track } from "@/lib/analytics.ts";
+import { initialFrame, nextFrame } from "@/lib/typewriter.ts";
+import { PLACEHOLDER_PROMPTS } from "@/lib/seeds.ts";
 
 type Chip = { canonical_key: string; role_description: string };
 
@@ -33,9 +35,29 @@ function stageIndex(stage: string): number {
   return i === -1 ? 0 : i;
 }
 
+// Types sample prompts into the placeholder, nerdapply-style. Pauses while
+// the input has text; reduced motion gets a static prompt instead.
+function useTypingPlaceholder(active: boolean): string {
+  const [frame, setFrame] = useState(initialFrame);
+  const [reduced, setReduced] = useState(false);
+
+  useEffect(() => {
+    setReduced(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }, []);
+
+  useEffect(() => {
+    if (!active || reduced) return;
+    const t = setTimeout(() => setFrame((f) => nextFrame(f, PLACEHOLDER_PROMPTS)), frame.delayMs);
+    return () => clearTimeout(t);
+  }, [active, reduced, frame]);
+
+  return reduced ? PLACEHOLDER_PROMPTS[0] : frame.text;
+}
+
 export function SearchExperience({ chips, initialQuery }: { chips: string[]; initialQuery?: string }) {
   const router = useRouter();
   const [query, setQuery] = useState(initialQuery ?? "");
+  const typingPlaceholder = useTypingPlaceholder(query === "");
   const [phase, setPhase] = useState<"idle" | "loading" | "done">("idle");
   const [activeStage, setActiveStage] = useState(0);
   const [stageDetail, setStageDetail] = useState<string | null>(null);
@@ -183,7 +205,7 @@ export function SearchExperience({ chips, initialQuery }: { chips: string[]; ini
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="e.g. sports agent, VP of product, quant trader…"
+          placeholder={typingPlaceholder}
           aria-label="What role are you trying to reach?"
           maxLength={300}
           style={{
