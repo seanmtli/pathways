@@ -146,6 +146,7 @@ interface IdentifyMatch {
       crustdata_company_id?: number;
       name?: string | null;
       primary_domain?: string | null;
+      all_domains?: string[] | null;
       professional_network_url?: string | null;
     } | null;
   } | null;
@@ -171,10 +172,35 @@ function parseCompanyId(data: IdentifyMatch["company_data"]): number | null {
   return Number.isFinite(id) ? id : null;
 }
 
+function normDomain(value: string): string {
+  return value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+}
+
 function acceptIdentifyMatch(
   kind: IdentifyKind,
   ranked: IdentifyMatch[],
+  requested: string,
 ): { id: number; data: NonNullable<IdentifyMatch["company_data"]> } | null {
+  // A domain is a unique identifier: if a candidate lists the requested domain
+  // among its domains at reasonable confidence, it IS the company — even when a
+  // tiny homonym ties on confidence_score. Big-tech names (Meta, Google) each
+  // have several 1.0-confidence homonyms, so the margin guard below rejects
+  // every one of them; the exact-domain hit is how we get past that.
+  if (kind === "domains") {
+    const want = normDomain(requested);
+    for (const match of ranked) {
+      const info = match.company_data?.basic_info;
+      if (!info) continue;
+      const domains = [info.primary_domain, ...(info.all_domains ?? [])]
+        .filter((d): d is string => Boolean(d))
+        .map(normDomain);
+      const id = parseCompanyId(match.company_data);
+      if (id && (match.confidence_score ?? 0) >= 0.7 && domains.includes(want)) {
+        return { id, data: match.company_data! };
+      }
+    }
+  }
+
   const top = ranked[0];
   const confidence = top?.confidence_score ?? 0;
   const margin = confidence - (ranked[1]?.confidence_score ?? 0);
@@ -221,7 +247,7 @@ async function requestIdentify(
     const ranked = [...(result?.matches ?? [])].sort(
       (a, b) => (b.confidence_score ?? 0) - (a.confidence_score ?? 0),
     );
-    const accepted = acceptIdentifyMatch(kind, ranked);
+    const accepted = acceptIdentifyMatch(kind, ranked, requested);
     if (accepted) {
       identifyCache.set(key, {
         crustdataCompanyId: accepted.id,
