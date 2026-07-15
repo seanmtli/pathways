@@ -14,7 +14,8 @@ import {
   parseQuery,
   canonicalKeyOf,
   companyScopeKey,
-  type ParseResult,
+  normalizeQuery,
+  PARSER_VERSION,
   type ResolvedCompanyScope,
 } from "./parser.ts";
 import { searchPeople } from "./crustdata.ts";
@@ -116,9 +117,20 @@ export async function runPipeline(rawQuery: string, ctx: PipelineContext = {}): 
     db.updateSearchLog(logId, { latency_ms: elapsed(), ...patch });
 
   try {
-    // 1. Parse + validate + canonicalize (LLM 1)
+    // 1. Parse + validate + canonicalize (LLM 1) — memoized per query so the
+    // same text always yields the same canonical key/scope (no parser drift,
+    // no duplicate paid pull). Memo failures never break the pipeline.
     stage("parsing");
-    const parsed: ParseResult = await retryOnce("parse", null, () => parseQuery(rawQuery));
+    const normalizedQuery = normalizeQuery(rawQuery);
+    let parsed = await db.getParseMemo(normalizedQuery, PARSER_VERSION).catch(() => null);
+    if (parsed) {
+      console.info(`parse memo hit: ${normalizedQuery}`);
+    } else {
+      parsed = await retryOnce("parse", null, () => parseQuery(rawQuery));
+      if (parsed.isValidRoleQuery) {
+        await db.putParseMemo(normalizedQuery, PARSER_VERSION, parsed).catch(() => {});
+      }
+    }
     if (!parsed.isValidRoleQuery || !parsed.canonicalRole || !parsed.crustdataFilter) {
       await finish({ outcome: "invalid_query" });
       return { kind: "invalid_query", suggestions: parsed.suggestions };

@@ -16,6 +16,13 @@ test("normalizeQuery lowercases, trims, collapses whitespace", () => {
   assert.equal(normalizeQuery("PM at a Startup"), normalizeQuery("pm at a startup"));
 });
 
+test("normalizeQuery is a stable memo key across casing and spacing", () => {
+  const a = normalizeQuery("Consultant at MBB");
+  const b = normalizeQuery("  consultant   at   mbb  ");
+  assert.equal(a, b);
+  assert.equal(a, "consultant at mbb");
+});
+
 test("categoryEvidenceOk requires a connective attaching the evidence", () => {
   assert.equal(categoryEvidenceOk("consultant at MBB", "MBB"), true);
   assert.equal(categoryEvidenceOk("PM at a startup", "startup"), true);
