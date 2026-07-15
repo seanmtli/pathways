@@ -166,6 +166,7 @@ interface RawParse {
   company_mentions: string[];
   proposed_companies: string[];
   scope_label: string;
+  scope_evidence: string;
   suggestions: string[];
 }
 
@@ -175,6 +176,57 @@ function normalize(value: string): string {
 
 function titleCase(value: string): string {
   return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function normalizeQuery(query: string): string {
+  return normalize(query);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// A proper company name in the user's own words is unambiguous evidence — honor
+// it with or without a connective ("McKinsey consultant", "VC at Sequoia").
+export function mentionInQuery(query: string, mention: string): boolean {
+  const m = normalize(mention);
+  return m.length > 0 && normalize(query).includes(m);
+}
+
+// A CATEGORY scope (set / preset / startup / inferred cohort) is honored only
+// when the query attaches the employer to the role with a connective. This is
+// what separates "consultant AT mbb" (a real employer scope) from "investment
+// banking analyst" (the industry is part of the role, not a chosen employer) —
+// the exact failure the audit found the model inventing.
+// ponytail: connective must directly precede the evidence phrase; a stray "at"
+// elsewhere won't pass. Ceiling: an employer typed with no connective and no
+// proper name (e.g. "startup PM") runs broad — the safe, honest failure.
+export function categoryEvidenceOk(query: string, evidence: string): boolean {
+  const q = normalize(query);
+  const e = normalize(evidence);
+  if (!e || !q.includes(e)) return false;
+  const re = new RegExp(`\\b(at|for|with|within)\\s+(a\\s+|an\\s+|the\\s+)?${escapeRegExp(e)}\\b`);
+  return re.test(q);
+}
+
+type ScopeParse = Pick<
+  RawParse,
+  "company_set_key" | "employer_preset_key" | "company_mentions" | "proposed_companies" | "scope_label" | "startup_employer"
+>;
+
+// The evidence gate: AI extracts, code verifies. Purely subtractive — it can
+// only strip an unverifiable scope, never add one, so it cannot change a query
+// that already parses unscoped.
+export function gateScopeInputs(raw: ScopeParse & { scope_evidence: string }, query: string): ScopeParse {
+  const categoryOk = categoryEvidenceOk(query, raw.scope_evidence);
+  return {
+    company_mentions: raw.company_mentions.filter((mention) => mentionInQuery(query, mention)),
+    company_set_key: categoryOk ? raw.company_set_key : null,
+    employer_preset_key: categoryOk ? raw.employer_preset_key : null,
+    proposed_companies: categoryOk ? raw.proposed_companies : [],
+    scope_label: categoryOk ? raw.scope_label : "",
+    startup_employer: categoryOk ? raw.startup_employer : false,
+  };
 }
 
 function companyHash(ids: readonly number[]): string {
