@@ -22,6 +22,13 @@ import {
   type EmployerPresetKey,
 } from "./employer-presets.ts";
 
+/** Thrown only when the user named a specific company we could not resolve.
+ *  Distinguishes an honest bounce from a category scope that should degrade. */
+export class NamedCompanyResolutionError extends Error {}
+
+/** Bump when the parse prompt or scope logic changes so stale memos are ignored. */
+export const PARSER_VERSION = "2026-07-15-evidence-gate";
+
 export interface CanonicalRole {
   title_family: string;
   industry_context: string;
@@ -99,6 +106,7 @@ const PARSE_SCHEMA = {
     company_mentions: { type: "array", items: { type: "string" }, maxItems: 5 },
     proposed_companies: { type: "array", items: { type: "string" }, maxItems: 15 },
     scope_label: { type: "string" },
+    scope_evidence: { type: "string" },
     suggestions: { type: "array", items: { type: "string" }, maxItems: 3 },
   },
   required: [
@@ -113,6 +121,7 @@ const PARSE_SCHEMA = {
     "company_mentions",
     "proposed_companies",
     "scope_label",
+    "scope_evidence",
     "suggestions",
   ],
   additionalProperties: false,
@@ -142,15 +151,18 @@ ${PRESET_GUIDE}
 7. Put explicitly named companies in company_mentions verbatim. Multiple companies mean OR. Explicit names take precedence over a cohort or preset.
 8. proposed_companies is only for a semantic cohort not covered above (for example "European neobanks"). Propose 2-15 exact employer names. scope_label repeats the user's category phrase. Otherwise proposed_companies is [] and scope_label is "".
 9. startup_employer remains true for startup/early-stage/venture-backed employers; also emit employer_preset_key "startup".
-10. suggestions contains 2-3 broader role queries. Never silently broaden the actual search.
+10. suggestions contains 2-3 broader role queries. Never silently broaden or narrow the actual search.
+11. scope_evidence: copy the EXACT words from the query that name the employer or employer category — normally the phrase right after "at/for/with/within" ("at MBB" -> "MBB", "at a startup" -> "startup", "at Sequoia" -> "Sequoia"). If the query names no employer, return "". The role's own industry is NOT an employer: "investment banking analyst", "hedge fund analyst", "solutions engineer", and "corporate development manager" each name a role, not an employer — for these return scope_evidence "" and leave company_set_key, employer_preset_key, company_mentions null/empty and startup_employer false.
 
 Canonical examples:
-- "VC investor at Sequoia" → title_family "venture capital investor", company_mentions ["Sequoia"], no set/preset.
-- "consultant at MBB" → company_set_key "consulting.mbb", no company mention.
-- "SWE at MANGO" → company_set_key "tech.mango".
-- "investment banker at a boutique investment bank" → company_set_key "banking.independent_advisory.v1".
-- "researcher at an AI lab" → company_set_key "ai.independent_model_labs.v1".
-- "PM at a startup" → employer_preset_key "startup".
+- "VC investor at Sequoia" -> title_family "venture capital investor", company_mentions ["Sequoia"], scope_evidence "Sequoia", no set/preset.
+- "consultant at MBB" -> company_set_key "consulting.mbb", scope_evidence "MBB".
+- "SWE at MANGO" -> company_set_key "tech.mango", scope_evidence "MANGO".
+- "investment banker at a boutique investment bank" -> company_set_key "banking.independent_advisory.v1", scope_evidence "boutique investment bank".
+- "PM at a startup" -> employer_preset_key "startup", startup_employer true, scope_evidence "startup".
+- "investment banking analyst" -> NO employer scope: all scope fields null/empty/false, scope_evidence "". The bank tier was never stated.
+- "hedge fund analyst" -> NO employer scope, scope_evidence "".
+- "solutions engineer" -> NO employer scope, scope_evidence "".
 
 If invalid, still provide all required fields using empty strings, arrays, and nulls.`;
 
@@ -310,7 +322,7 @@ export async function resolveCompanyScope(raw: Pick<
   if (mentions.length > 0 && !mentionSet) {
     const companies = await resolveNames(mentions);
     if (companies.length !== new Set(mentions.map(normalize)).size) {
-      throw new Error("One or more named companies could not be resolved unambiguously");
+      throw new NamedCompanyResolutionError("One or more named companies could not be resolved unambiguously");
     }
     return {
       kind: "named",
@@ -418,13 +430,22 @@ export async function parseQuery(rawQuery: string): Promise<ParseResult> {
   const titleVariants = raw.title_variants.map((value) => value.trim()).filter((value) => value.length > 2).slice(0, 6);
   if (titleVariants.length === 0) return invalid();
 
+  const gated = gateScopeInputs(raw, rawQuery);
   let companyScope: ResolvedCompanyScope | null;
   try {
-    companyScope = await resolveCompanyScope(raw);
+    companyScope = await resolveCompanyScope(gated);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    console.error(`resolveCompanyScope failed for "${rawQuery.slice(0, 120)}": ${detail}`);
-    return invalid([`Try ${titleCase(canonicalRole.title_family)} at a broader employer group`, titleCase(canonicalRole.title_family)]);
+    if (err instanceof NamedCompanyResolutionError) {
+      // The user named a company we can't find — bouncing is honest; showing
+      // everything would silently answer a different question.
+      console.error(`named company unresolved for "${rawQuery.slice(0, 120)}": ${detail}`);
+      return invalid([`Try ${titleCase(canonicalRole.title_family)} at a broader employer group`, titleCase(canonicalRole.title_family)]);
+    }
+    // A category scope we can't fully resolve degrades to a broad, honest
+    // search instead of erroring — the fix for the audit's ERROR runs.
+    console.warn(`category scope degraded to broad for "${rawQuery.slice(0, 120)}": ${detail}`);
+    companyScope = null;
   }
   if (companyScope && !config.companyScopedSearchEnabled()) {
     console.warn("COMPANY_SCOPED_SEARCH_ENABLED is false — blocking employer-scoped search");
