@@ -217,7 +217,7 @@ export function categoryEvidenceOk(query: string, evidence: string): boolean {
   const q = normalize(query);
   const e = normalize(evidence);
   if (!e || !q.includes(e)) return false;
-  const re = new RegExp(`\\b(at|for|with|within)\\s+(a\\s+|an\\s+|the\\s+)?${escapeRegExp(e)}\\b`);
+  const re = new RegExp(`\\b(at|for|with|within|in)\\s+(a\\s+|an\\s+|the\\s+)?${escapeRegExp(e)}\\b`);
   return re.test(q);
 }
 

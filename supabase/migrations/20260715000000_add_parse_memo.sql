@@ -11,6 +11,3 @@ create table if not exists public.pw_parse_memo (
 );
 
 alter table public.pw_parse_memo enable row level security;
-
-create index if not exists pw_parse_memo_fresh_idx
-  on public.pw_parse_memo (normalized_query, parser_version, created_at desc);

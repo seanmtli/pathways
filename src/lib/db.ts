@@ -312,13 +312,14 @@ export async function amendFeedbackComment(row: {
 // ---------- parse_memo ----------
 
 export async function getParseMemo(normalizedQuery: string, parserVersion: string): Promise<ParseResult | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("pw_parse_memo")
     .select("parse_result")
     .eq("normalized_query", normalizedQuery)
     .eq("parser_version", parserVersion)
     .gte("created_at", freshnessCutoff())
     .maybeSingle();
+  if (error) console.warn(`getParseMemo failed for "${normalizedQuery}": ${error.message}`);
   return data ? (data.parse_result as ParseResult) : null;
 }
 
@@ -327,7 +328,7 @@ export async function putParseMemo(
   parserVersion: string,
   parseResult: ParseResult,
 ): Promise<void> {
-  await supabase.from("pw_parse_memo").upsert(
+  const { error } = await supabase.from("pw_parse_memo").upsert(
     {
       normalized_query: normalizedQuery,
       parser_version: parserVersion,
@@ -336,4 +337,5 @@ export async function putParseMemo(
     },
     { onConflict: "normalized_query,parser_version" },
   );
+  if (error) console.warn(`putParseMemo failed for "${normalizedQuery}": ${error.message}`);
 }
